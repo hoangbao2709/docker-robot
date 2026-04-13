@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+# coding=utf-8
+
+import copy
+import threading
+
+LOCK = threading.Lock()
+
+GOAL_REQUEST = None
+INITIAL_POSE_REQUEST = None
+CLEAR_REQUEST = False
+SAVE_REQUEST_NAME = None
+
+SHARED_STATE = {
+    "map_version": 0,
+    "map_info": None,
+    "render_info": None,
+    "pose": {
+        "x": 0.0,
+        "y": 0.0,
+        "theta": 0.0,
+        "stamp": 0.0,
+        "ok": False,
+    },
+    "goal": {
+        "x": None,
+        "y": None,
+        "yaw": None,
+        "stamp": 0.0,
+    },
+    "paths": {
+        "a_star": [],
+    },
+    "scan": {
+        "points": [],
+        "stamp": 0.0,
+        "frame_id": "",
+        "ok": False,
+    },
+    "status": {
+        "slam_ok": False,
+        "tf_ok": False,
+        "planner_ok": False,
+        "planner_msg": "idle",
+        "map_age_sec": None,
+        "pose_age_sec": None,
+        "last_update": 0.0,
+    },
+}
+
+
+def set_goal_request(x, y, yaw, u=None, v=None):
+    global GOAL_REQUEST
+    with LOCK:
+        GOAL_REQUEST = {
+            "x": float(x),
+            "y": float(y),
+            "yaw": float(yaw),
+        }
+        if u is not None:
+            GOAL_REQUEST["u"] = float(u)
+        if v is not None:
+            GOAL_REQUEST["v"] = float(v)
+
+
+def pop_goal_request():
+    global GOAL_REQUEST
+    with LOCK:
+        req = GOAL_REQUEST
+        GOAL_REQUEST = None
+    return req
+
+
+def set_initial_pose_request(x, y, yaw, u=None, v=None):
+    global INITIAL_POSE_REQUEST
+    with LOCK:
+        INITIAL_POSE_REQUEST = {
+            "x": float(x),
+            "y": float(y),
+            "yaw": float(yaw),
+        }
+        if u is not None:
+            INITIAL_POSE_REQUEST["u"] = float(u)
+        if v is not None:
+            INITIAL_POSE_REQUEST["v"] = float(v)
+
+
+def pop_initial_pose_request():
+    global INITIAL_POSE_REQUEST
+    with LOCK:
+        req = INITIAL_POSE_REQUEST
+        INITIAL_POSE_REQUEST = None
+    return req
+
+
+def request_clear_path():
+    global CLEAR_REQUEST
+    with LOCK:
+        CLEAR_REQUEST = True
+
+
+def pop_clear_request():
+    global CLEAR_REQUEST
+    with LOCK:
+        flag = CLEAR_REQUEST
+        CLEAR_REQUEST = False
+    return flag
+
+
+def set_save_request(name: str):
+    global SAVE_REQUEST_NAME
+    with LOCK:
+        SAVE_REQUEST_NAME = name
+
+
+def pop_save_request():
+    global SAVE_REQUEST_NAME
+    with LOCK:
+        name = SAVE_REQUEST_NAME
+        SAVE_REQUEST_NAME = None
+    return name
+
+
+def get_state_snapshot():
+    with LOCK:
+        return copy.deepcopy(SHARED_STATE)
+
+
+def update_shared_state(fn):
+    with LOCK:
+        fn(SHARED_STATE)
+
