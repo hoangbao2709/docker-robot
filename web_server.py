@@ -6,7 +6,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
-
+from points_store import load_points, upsert_point, get_point, delete_point
 from cartographer_manager import get_slam_status
 from config import MAP_PNG_PATH, MAP_SAVE_DIR
 from shared_state import (
@@ -48,6 +48,11 @@ class ImageServer(BaseHTTPRequestHandler):
     def _send_html(self, html):
         self._send_bytes(200, "text/html; charset=utf-8", html.encode("utf-8"))
 
+    def _read_json_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        return json.loads(raw.decode("utf-8"))
+    
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -121,7 +126,18 @@ class ImageServer(BaseHTTPRequestHandler):
             request_clear_path()
             self._send_text(200, "CLEARED")
             return
+        if path == "/points":
+            self._send_json(200, load_points())
+            return
 
+        if path.startswith("/points/"):
+            name = os.path.basename(path)
+            point = get_point(name)
+            if point is None:
+                self.send_error(404, "point not found")
+                return
+            self._send_json(200, {"name": name, **point})
+            return
         if path.startswith("/save_map"):
             try:
                 qs = parse_qs(parsed.query)
@@ -212,6 +228,86 @@ class ImageServer(BaseHTTPRequestHandler):
                 self._send_text(200, f"UPLOADED {safe}")
             except Exception as e:
                 self.send_error(500, f"Upload error: {e}")
+            return
+        if path == "/points":
+            try:
+                body = self._read_json_body()
+                name = str(body.get("name", "")).strip()
+                x = float(body.get("x"))
+                y = float(body.get("y"))
+                yaw = float(body.get("yaw", 0.0))
+
+                if not name:
+                    raise ValueError("name is required")
+
+                safe_name = "".join(ch for ch in name if ch.isalnum() or ch in "_-")
+                if not safe_name:
+                    raise ValueError("invalid point name")
+
+                point = upsert_point(safe_name, x, y, yaw)
+                self._send_json(200, {
+                    "success": True,
+                    "name": safe_name,
+                    "point": point,
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+
+        if path == "/go_to_point":
+            try:
+                body = self._read_json_body()
+                name = str(body.get("name", "")).strip()
+
+                if not name:
+                    raise ValueError("name is required")
+
+                point = get_point(name)
+                if point is None:
+                    self.send_error(404, "point not found")
+                    return
+
+                set_goal_request(
+                    point["x"],
+                    point["y"],
+                    point.get("yaw", 0.0),
+                )
+
+                self._send_json(200, {
+                    "success": True,
+                    "message": f"goal '{name}' sent",
+                    "goal": {
+                        "name": name,
+                        "x": point["x"],
+                        "y": point["y"],
+                        "yaw": point.get("yaw", 0.0),
+                    }
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+        if path == "/delete_point":
+            try:
+                body = self._read_json_body()
+                name = str(body.get("name", "")).strip()
+                if not name:
+                    raise ValueError("name is required")
+
+                deleted = delete_point(name)
+                if deleted is None:
+                    self.send_error(404, "point not found")
+                    return
+
+                self._send_json(200, {
+                    "success": True,
+                    "deleted": name
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+
+        if path == "/upload_map":
+            ...
             return
 
         self.send_error(404)
