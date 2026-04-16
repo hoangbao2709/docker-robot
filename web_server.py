@@ -4,19 +4,76 @@
 import cgi
 import json
 import os
+import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 from points_store import load_points, upsert_point, get_point, delete_point
 from cartographer_manager import get_slam_status
-from config import MAP_PNG_PATH, MAP_SAVE_DIR
+from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
 from shared_state import (
+    clear_map_override,
+    get_map_override,
     get_state_snapshot,
     request_clear_path,
+    set_map_override,
     set_goal_request,
     set_initial_pose_request,
     set_save_request,
 )
 from templates import build_index_html
+
+LOADED_MAP_IMAGE_PATH = os.path.join(BASE_DIR, "_loaded_map_preview.png")
+
+
+def _get_effective_state_snapshot():
+    snapshot = get_state_snapshot()
+    override = get_map_override()
+    if override is None:
+        return snapshot
+
+    snapshot["map_version"] = override["map_version"]
+    snapshot["map_info"] = override["map_info"]
+    snapshot["render_info"] = override["render_info"]
+    snapshot["status"]["last_update"] = snapshot["status"].get("last_update", 0.0)
+    snapshot["status"]["planner_msg"] = "loaded saved map bundle"
+    return snapshot
+
+
+def _get_effective_map_png_path():
+    override = get_map_override()
+    if override and os.path.isfile(override["image_path"]):
+        return override["image_path"]
+    return MAP_PNG_PATH
+
+
+def _activate_map_bundle(bundle_path: str):
+    with zipfile.ZipFile(bundle_path, "r") as zf:
+        if "metadata.json" not in zf.namelist():
+            raise ValueError("bundle missing metadata.json")
+        if "preview.png" not in zf.namelist():
+            raise ValueError("bundle missing preview.png")
+
+        metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
+        map_info = metadata.get("map_info")
+        render_info = metadata.get("render_info")
+
+        if not isinstance(map_info, dict) or not isinstance(render_info, dict):
+            raise ValueError("bundle metadata invalid")
+
+        with open(LOADED_MAP_IMAGE_PATH, "wb") as f:
+            f.write(zf.read("preview.png"))
+
+    set_map_override(
+        LOADED_MAP_IMAGE_PATH,
+        map_info=map_info,
+        render_info=render_info,
+    )
+
+    return {
+        "map_info": map_info,
+        "render_info": render_info,
+        "image_path": LOADED_MAP_IMAGE_PATH,
+    }
 
 
 class ImageServer(BaseHTTPRequestHandler):
@@ -69,12 +126,12 @@ class ImageServer(BaseHTTPRequestHandler):
             return
 
         if path == "/state":
-            self._send_json(200, get_state_snapshot())
+            self._send_json(200, _get_effective_state_snapshot())
             return
 
         if path == "/map.png":
             try:
-                with open(MAP_PNG_PATH, "rb") as f:
+                with open(_get_effective_map_png_path(), "rb") as f:
                     data = f.read()
                 self._send_bytes(
                     200,
@@ -153,6 +210,11 @@ class ImageServer(BaseHTTPRequestHandler):
                 self.send_error(400, f"bad params: {e}")
             return
 
+        if path == "/use_live_map":
+            clear_map_override()
+            self._send_text(200, "LIVE_MAP_ENABLED")
+            return
+
         if path.startswith("/maps/"):
             rel = path[len("/maps/"):]
             fname = os.path.basename(rel)
@@ -217,13 +279,23 @@ class ImageServer(BaseHTTPRequestHandler):
                 safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in fname)
                 ext = os.path.splitext(safe)[1].lower()
 
-                if ext not in (".yaml", ".yml", ".pgm", ".png", ".jpg", ".jpeg"):
+                if ext not in (".yaml", ".yml", ".pgm", ".png", ".jpg", ".jpeg", ".zip"):
                     self.send_error(400, "Unsupported file type")
                     return
 
                 fpath = os.path.join(MAP_SAVE_DIR, safe)
                 with open(fpath, "wb") as f:
                     f.write(field_item.file.read())
+
+                if ext == ".zip":
+                    bundle_info = _activate_map_bundle(fpath)
+                    self._send_json(200, {
+                        "success": True,
+                        "message": f"LOADED {safe}",
+                        "bundle": safe,
+                        "map_info": bundle_info["map_info"],
+                    })
+                    return
 
                 self._send_text(200, f"UPLOADED {safe}")
             except Exception as e:

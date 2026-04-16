@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # coding=utf-8
 
+import json
 import math
 import os
+import shutil
+import zipfile
 
 import matplotlib
 matplotlib.use("Agg")
@@ -531,6 +534,7 @@ class LiveMapWeb(Node):
             return
 
         try:
+            self.render_map_png_if_needed()
             self.save_map_files(name, self.map_msg)
             self.get_logger().info(f"SAVE_MAP: saved map '{name}' into {MAP_SAVE_DIR}")
         except Exception as e:
@@ -565,6 +569,56 @@ class LiveMapWeb(Node):
 
         with open(yaml_path, "w") as f:
             f.write(yaml_content)
+
+        preview_png_path = os.path.join(MAP_SAVE_DIR, base_name + ".preview.png")
+        if os.path.isfile(MAP_PNG_PATH):
+            shutil.copyfile(MAP_PNG_PATH, preview_png_path)
+
+        snapshot = get_state_snapshot()
+        map_info = snapshot.get("map_info") or {
+            "width": int(w),
+            "height": int(h),
+            "resolution": float(msg.info.resolution),
+            "origin_x": float(msg.info.origin.position.x),
+            "origin_y": float(msg.info.origin.position.y),
+            "frame_id": self.map_frame,
+        }
+        render_info = snapshot.get("render_info") or {
+            "width_cells": int(w),
+            "height_cells": int(h),
+            "resolution": float(msg.info.resolution),
+            "origin_x": float(msg.info.origin.position.x),
+            "origin_y": float(msg.info.origin.position.y),
+            "pad_left_cells": 0,
+            "pad_bottom_cells": 0,
+        }
+
+        metadata = {
+            "format": "slam-live-map-bundle-v1",
+            "base_name": base_name,
+            "map_info": map_info,
+            "render_info": render_info,
+            "files": {
+                "preview": "preview.png",
+                "occupancy": base_name + ".pgm",
+                "metadata_yaml": base_name + ".yaml",
+            },
+        }
+
+        bundle_json_path = os.path.join(MAP_SAVE_DIR, base_name + ".bundle.json")
+        with open(bundle_json_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        bundle_zip_path = os.path.join(MAP_SAVE_DIR, base_name + ".bundle.zip")
+        with zipfile.ZipFile(bundle_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "metadata.json",
+                json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8"),
+            )
+            if os.path.isfile(preview_png_path):
+                zf.write(preview_png_path, arcname="preview.png")
+            zf.write(pgm_path, arcname=os.path.basename(pgm_path))
+            zf.write(yaml_path, arcname=os.path.basename(yaml_path))
 
     def publish_path(self, path_xy, frame_id: str):
         path_msg = Path()

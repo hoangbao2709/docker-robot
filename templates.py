@@ -224,7 +224,7 @@ def build_index_html():
           <div class="row">
             <button id="saveBtn" class="btn btn-blue">SAVE MAP</button>
             <button id="loadBtn" class="btn btn-blue">LOAD MAP</button>
-            <input id="mapFile" type="file" accept=".yaml,.yml,.pgm,.png,.jpg,.jpeg"/>
+            <input id="mapFile" type="file" accept=".zip,.bundle.zip"/>
           </div>
           <div class="row">
             <button id="resetViewBtn" class="btn">RESET VIEW</button>
@@ -1232,7 +1232,7 @@ def build_index_html():
         if (!res.ok) throw new Error("save_map failed");
 
         setTimeout(() => {
-          window.open(`/maps/${encodeURIComponent(safe)}.yaml`, "_blank");
+          window.open(`/maps/${encodeURIComponent(safe)}.bundle.zip`, "_blank");
         }, 1000);
       } catch (e) {
         alert("Save map failed: " + e);
@@ -1251,7 +1251,8 @@ def build_index_html():
       try {
         const res = await api("/upload_map", { method: "POST", body: formData });
         if (!res.ok) throw new Error("Upload failed");
-        alert("Uploaded: " + file.name);
+        await fetchState();
+        alert("Loaded map bundle: " + file.name);
       } catch (err) {
         alert("Upload error: " + err);
       } finally {
