@@ -86,6 +86,36 @@ def build_index_html():
       max-width: 360px;
     }
 
+    .toolbar.collapsed {
+      min-width: 0;
+      width: auto;
+      padding: 8px;
+    }
+
+    .toolbar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .toolbar-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #d8d8d8;
+      letter-spacing: 0.04em;
+    }
+
+    .toolbar-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .toolbar.collapsed .toolbar-body {
+      display: none;
+    }
+
     .row {
       display: flex;
       gap: 8px;
@@ -108,6 +138,14 @@ def build_index_html():
     .btn-danger { background: #e53935; }
     .btn-orange { background: #fb8c00; }
     .btn-green { background: #2e7d32; }
+
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.08);
+      min-width: 34px;
+      padding: 6px 10px;
+      font-size: 16px;
+      line-height: 1;
+    }
 
     .btn-toggle.active {
       outline: 2px solid #fff;
@@ -163,45 +201,52 @@ def build_index_html():
 </head>
 <body>
   <div class="wrap">
-    <div class="toolbar">
-      <div class="row">
-        <button id="viewBtn" class="btn btn-blue btn-toggle active">VIEW</button>
-        <button id="navBtn" class="btn btn-toggle">NAV</button>
+    <div id="toolbar" class="toolbar">
+      <div class="toolbar-header">
+        <div class="toolbar-title">OPTIONS</div>
+        <button id="toolbarToggleBtn" class="btn btn-ghost" title="Collapse options">-</button>
       </div>
 
-      <div class="row">
-        <label class="cb"><input type="checkbox" id="showRobot" checked/>Robot</label>
-        <label class="cb"><input type="checkbox" id="showPath" checked/>Path</label>
-        <label class="cb"><input type="checkbox" id="showScan" checked/>Scan</label>
-        <label class="cb"><input type="checkbox" id="showGrid"/>Grid</label>
-      </div>
+      <div id="toolbarBody" class="toolbar-body">
+        <div class="row">
+          <button id="viewBtn" class="btn btn-blue btn-toggle active">VIEW</button>
+          <button id="navBtn" class="btn btn-toggle">NAV</button>
+        </div>
 
-      <div id="viewPanel">
         <div class="row">
-          <button id="saveBtn" class="btn btn-blue">SAVE MAP</button>
-          <button id="loadBtn" class="btn btn-blue">LOAD MAP</button>
-          <input id="mapFile" type="file" accept=".yaml,.yml,.pgm,.png,.jpg,.jpeg"/>
+          <label class="cb"><input type="checkbox" id="showRobot" checked/>Robot</label>
+          <label class="cb"><input type="checkbox" id="showPath" checked/>Path</label>
+          <label class="cb"><input type="checkbox" id="showScan" checked/>Scan</label>
+          <label class="cb"><input type="checkbox" id="showGrid"/>Grid</label>
         </div>
-        <div class="row">
-          <button id="resetViewBtn" class="btn">RESET VIEW</button>
-          <button id="rotateLeftBtn" class="btn">ROTATE -</button>
-          <button id="rotateRightBtn" class="btn">ROTATE +</button>
-          <button id="autoAlignBtn" class="btn">AUTO ALIGN</button>
-          <button id="resetAngleBtn" class="btn">ANGLE 0</button>
-        </div>
-        <div class="small" id="angleInfo">Display angle: 0.0 deg</div>
-      </div>
 
-      <div id="navPanel" style="display:none">
-        <div class="row">
-          <button id="setGoalBtn" class="btn btn-green btn-toggle active">SET GOAL</button>
-          <button id="setInitPoseBtn" class="btn btn-orange btn-toggle">SET INITIAL POSE</button>
+        <div id="viewPanel">
+          <div class="row">
+            <button id="saveBtn" class="btn btn-blue">SAVE MAP</button>
+            <button id="loadBtn" class="btn btn-blue">LOAD MAP</button>
+            <input id="mapFile" type="file" accept=".yaml,.yml,.pgm,.png,.jpg,.jpeg"/>
+          </div>
+          <div class="row">
+            <button id="resetViewBtn" class="btn">RESET VIEW</button>
+            <button id="rotateLeftBtn" class="btn">ROTATE -</button>
+            <button id="rotateRightBtn" class="btn">ROTATE +</button>
+            <button id="autoAlignBtn" class="btn">AUTO ALIGN</button>
+            <button id="resetAngleBtn" class="btn">ANGLE 0</button>
+          </div>
+          <div class="small" id="angleInfo">Display angle: 0.0 deg</div>
         </div>
-        <div class="row">
-          <button id="clearBtn" class="btn btn-danger">STOP & CLEAR PATH</button>
-        </div>
-        <div class="small" id="navHint">
-          SET GOAL: click 1 lan chon diem, click lan 2 chon huong.
+
+        <div id="navPanel" style="display:none">
+          <div class="row">
+            <button id="setGoalBtn" class="btn btn-green btn-toggle active">SET GOAL</button>
+            <button id="setInitPoseBtn" class="btn btn-orange btn-toggle">SET INITIAL POSE</button>
+          </div>
+          <div class="row">
+            <button id="clearBtn" class="btn btn-danger">STOP & CLEAR PATH</button>
+          </div>
+          <div class="small" id="navHint">
+            SET GOAL: click 1 lan chon diem, click lan 2 chon huong.
+          </div>
         </div>
       </div>
     </div>
@@ -232,6 +277,9 @@ def build_index_html():
     const overlay = document.getElementById("overlay");
     const ctx = overlay.getContext("2d");
 
+    const toolbar = document.getElementById("toolbar");
+    const toolbarBody = document.getElementById("toolbarBody");
+    const toolbarToggleBtn = document.getElementById("toolbarToggleBtn");
     const viewBtn = document.getElementById("viewBtn");
     const navBtn = document.getElementById("navBtn");
     const viewPanel = document.getElementById("viewPanel");
@@ -282,9 +330,14 @@ def build_index_html():
     let navAction = "goal";
 
     let hasInitialFit = false;
+    let toolbarCollapsed = false;
 
     function getRotationKey() {
       return "slam_display_rotation_deg";
+    }
+
+    function getToolbarCollapsedKey() {
+      return "slam_toolbar_collapsed";
     }
 
     function loadRotation() {
@@ -307,6 +360,33 @@ def build_index_html():
         );
       } catch (_) {
       }
+    }
+
+    function loadToolbarCollapsed() {
+      try {
+        return window.localStorage.getItem(getToolbarCollapsedKey()) === "1";
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function saveToolbarCollapsed() {
+      try {
+        window.localStorage.setItem(
+          getToolbarCollapsedKey(),
+          toolbarCollapsed ? "1" : "0"
+        );
+      } catch (_) {
+      }
+    }
+
+    function setToolbarCollapsed(collapsed) {
+      toolbarCollapsed = !!collapsed;
+      toolbar.classList.toggle("collapsed", toolbarCollapsed);
+      toolbarToggleBtn.innerText = toolbarCollapsed ? "+" : "-";
+      toolbarToggleBtn.title = toolbarCollapsed ? "Open options" : "Collapse options";
+      toolbarBody.setAttribute("aria-hidden", toolbarCollapsed ? "true" : "false");
+      saveToolbarCollapsed();
     }
 
     function getRotatedBounds(width, height, angle) {
@@ -1132,6 +1212,7 @@ def build_index_html():
     rotateRightBtn.addEventListener("click", () => setDisplayRotation(viewRotation + Math.PI / 36.0));
     autoAlignBtn.addEventListener("click", autoAlignDisplay);
     resetAngleBtn.addEventListener("click", () => setDisplayRotation(0.0));
+    toolbarToggleBtn.addEventListener("click", () => setToolbarCollapsed(!toolbarCollapsed));
 
     clearBtn.addEventListener("click", async () => {
       try {
@@ -1184,6 +1265,7 @@ def build_index_html():
     showGrid.addEventListener("change", drawOverlay);
 
     viewRotation = loadRotation();
+    setToolbarCollapsed(loadToolbarCollapsed());
     updateAngleInfo();
     applyTransform();
     switchMode("view");
