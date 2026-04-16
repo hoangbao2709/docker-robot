@@ -13,9 +13,11 @@ def build_index_html():
     html, body {
       margin: 0;
       padding: 0;
-      background: #2e2e2e;
-      color: #fff;
-      font-family: Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(40, 84, 84, 0.24), transparent 28%),
+        linear-gradient(180deg, #151718 0%, #232526 100%);
+      color: #eef3f2;
+      font-family: "Segoe UI", "Trebuchet MS", Arial, sans-serif;
       width: 100%;
       height: 100%;
       overflow: hidden;
@@ -25,7 +27,9 @@ def build_index_html():
       position: relative;
       width: 100%;
       height: 100%;
-      background: #2e2e2e;
+      background:
+        radial-gradient(circle at top left, rgba(50, 126, 110, 0.18), transparent 32%),
+        linear-gradient(180deg, #1b1d1e 0%, #292b2c 100%);
       overflow: hidden;
     }
 
@@ -72,24 +76,27 @@ def build_index_html():
 
     .toolbar {
       position: absolute;
-      top: 12px;
-      left: 12px;
+      top: 18px;
+      left: 18px;
       z-index: 20;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      background: rgba(0, 0, 0, 0.62);
-      padding: 10px;
-      border-radius: 8px;
-      border: 1px solid #2d2d2d;
-      min-width: 270px;
-      max-width: 360px;
+      gap: 12px;
+      background: rgba(29, 31, 32, 0.84);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.30);
+      min-width: 292px;
+      max-width: 380px;
     }
 
     .toolbar.collapsed {
       min-width: 0;
       width: auto;
-      padding: 8px;
+      padding: 10px 12px;
     }
 
     .toolbar-header {
@@ -102,14 +109,14 @@ def build_index_html():
     .toolbar-title {
       font-size: 12px;
       font-weight: 700;
-      color: #d8d8d8;
-      letter-spacing: 0.04em;
+      color: #f2f7f5;
+      letter-spacing: 0.12em;
     }
 
     .toolbar-body {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 12px;
     }
 
     .toolbar.collapsed .toolbar-body {
@@ -123,21 +130,46 @@ def build_index_html():
       align-items: center;
     }
 
-    .btn {
-      padding: 8px 10px;
-      font-size: 13px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 700;
-      color: white;
-      background: #2f2f2f;
+    .segmented {
+      display: inline-flex;
+      gap: 8px;
+      padding: 4px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.05);
     }
 
-    .btn-blue { background: #1e88e5; }
-    .btn-danger { background: #e53935; }
-    .btn-orange { background: #fb8c00; }
-    .btn-green { background: #2e7d32; }
+    .section-card {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .btn {
+      padding: 9px 12px;
+      font-size: 13px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 700;
+      color: #f7fbfa;
+      background: linear-gradient(180deg, #3f4245 0%, #2f3336 100%);
+      transition: transform 120ms ease, filter 120ms ease, background 120ms ease;
+    }
+
+    .btn:hover {
+      filter: brightness(1.08);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-blue { background: linear-gradient(180deg, #40a4ff 0%, #1f7fdb 100%); }
+    .btn-danger { background: linear-gradient(180deg, #ff655d 0%, #dd362f 100%); }
+    .btn-orange { background: linear-gradient(180deg, #ffb23a 0%, #f08a08 100%); }
+    .btn-green { background: linear-gradient(180deg, #46b95f 0%, #2f8b46 100%); }
 
     .btn-ghost {
       background: rgba(255, 255, 255, 0.08);
@@ -148,27 +180,90 @@ def build_index_html():
     }
 
     .btn-toggle.active {
-      outline: 2px solid #fff;
+      background: linear-gradient(180deg, #5caef8 0%, #2581db 100%);
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,0.78);
+      color: #ffffff;
+    }
+
+    .btn-toggle.active.btn-green {
+      background: linear-gradient(180deg, #53ca70 0%, #2f8b46 100%);
+    }
+
+    .btn-toggle.active.btn-orange {
+      background: linear-gradient(180deg, #ffbf57 0%, #f08a08 100%);
+    }
+
+    .btn-wide {
+      flex: 1 1 0;
+      min-width: 120px;
     }
 
     .panel {
       position: absolute;
-      right: 12px;
-      top: 12px;
+      right: 18px;
+      top: 18px;
       z-index: 20;
-      background: rgba(0,0,0,0.62);
-      padding: 12px;
-      border-radius: 8px;
-      border: 1px solid #2d2d2d;
-      min-width: 300px;
-      max-width: 460px;
+      background: rgba(24, 26, 27, 0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.08);
+      min-width: 320px;
+      max-width: min(420px, calc(100vw - 36px));
+      max-height: calc(100vh - 36px);
+      overflow: auto;
       font-size: 13px;
-      line-height: 1.45;
+      line-height: 1.5;
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
     }
 
     .panel h3 {
-      margin: 0 0 8px 0;
+      margin: 0;
       font-size: 15px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      font-size: 12px;
+      color: #d3dcda;
+    }
+
+    .status-chip::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #8da39d;
+    }
+
+    .status-chip.ok::before { background: #59d377; }
+    .status-chip.warn::before { background: #f3c359; }
+    .status-chip.bad::before { background: #ff746d; }
+
+    .panel-section {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.08);
     }
 
     .ok { color: #6DFF7A; }
@@ -197,6 +292,22 @@ def build_index_html():
     input[type="file"] {
       display: none;
     }
+
+    @media (max-width: 820px) {
+      .toolbar {
+        top: 12px;
+        left: 12px;
+        max-width: calc(100vw - 24px);
+      }
+
+      .panel {
+        top: 12px;
+        right: 12px;
+        left: 12px;
+        max-width: none;
+        min-width: 0;
+      }
+    }
   </style>
 </head>
 <body>
@@ -208,22 +319,24 @@ def build_index_html():
       </div>
 
       <div id="toolbarBody" class="toolbar-body">
-        <div class="row">
+        <div class="segmented">
           <button id="viewBtn" class="btn btn-blue btn-toggle active">VIEW</button>
           <button id="navBtn" class="btn btn-toggle">NAV</button>
         </div>
 
-        <div class="row">
-          <label class="cb"><input type="checkbox" id="showRobot" checked/>Robot</label>
-          <label class="cb"><input type="checkbox" id="showPath" checked/>Path</label>
-          <label class="cb"><input type="checkbox" id="showScan" checked/>Scan</label>
-          <label class="cb"><input type="checkbox" id="showGrid"/>Grid</label>
+        <div class="section-card">
+          <div class="row">
+            <label class="cb"><input type="checkbox" id="showRobot" checked/>Robot</label>
+            <label class="cb"><input type="checkbox" id="showPath" checked/>Path</label>
+            <label class="cb"><input type="checkbox" id="showScan" checked/>Scan</label>
+            <label class="cb"><input type="checkbox" id="showGrid"/>Grid</label>
+          </div>
         </div>
 
-        <div id="viewPanel">
+        <div id="viewPanel" class="section-card">
           <div class="row">
-            <button id="saveBtn" class="btn btn-blue">SAVE MAP</button>
-            <button id="loadBtn" class="btn btn-blue">LOAD MAP</button>
+            <button id="saveBtn" class="btn btn-blue btn-wide">SAVE MAP</button>
+            <button id="loadBtn" class="btn btn-blue btn-wide">LOAD MAP</button>
             <input id="mapFile" type="file" accept=".zip,.bundle.zip"/>
           </div>
           <div class="row">
@@ -236,13 +349,16 @@ def build_index_html():
           <div class="small" id="angleInfo">Display angle: 0.0 deg</div>
         </div>
 
-        <div id="navPanel" style="display:none">
+        <div id="navPanel" class="section-card" style="display:none">
           <div class="row">
-            <button id="setGoalBtn" class="btn btn-green btn-toggle active">SET GOAL</button>
-            <button id="setInitPoseBtn" class="btn btn-orange btn-toggle">SET INITIAL POSE</button>
+            <button id="statusToggleBtn" class="btn btn-toggle btn-wide">STATUS</button>
           </div>
           <div class="row">
-            <button id="clearBtn" class="btn btn-danger">STOP & CLEAR PATH</button>
+            <button id="setGoalBtn" class="btn btn-green btn-toggle btn-wide active">SET GOAL</button>
+            <button id="setInitPoseBtn" class="btn btn-orange btn-toggle btn-wide">SET INITIAL POSE</button>
+          </div>
+          <div class="row">
+            <button id="clearBtn" class="btn btn-danger btn-wide">STOP & CLEAR PATH</button>
           </div>
           <div class="small" id="navHint">
             SET GOAL: click 1 lan chon diem, click lan 2 chon huong.
@@ -252,14 +368,19 @@ def build_index_html():
     </div>
 
     <div id="statusPanel" class="panel" style="display:none">
-      <h3>System status</h3>
+      <div class="panel-header">
+        <h3>System Status</h3>
+        <button id="statusCloseBtn" class="btn btn-ghost" title="Hide status">x</button>
+      </div>
       <div id="statusBox">Waiting...</div>
-      <hr style="border-color:#333">
-      <div id="goalInfo">Goal: none</div>
-      <div id="cursorInfo" class="small">Coordinate: --</div>
-      <hr style="border-color:#333">
-      <div><b>SLAM process</b></div>
-      <div id="slamStatusBox" class="small">Checking...</div>
+      <div class="panel-section">
+        <div id="goalInfo">Goal: none</div>
+        <div id="cursorInfo" class="small">Coordinate: --</div>
+      </div>
+      <div class="panel-section">
+        <div><b>SLAM process</b></div>
+        <div id="slamStatusBox" class="small">Checking...</div>
+      </div>
     </div>
 
     <div id="viewport" class="viewport">
@@ -293,6 +414,8 @@ def build_index_html():
     const rotateRightBtn = document.getElementById("rotateRightBtn");
     const autoAlignBtn = document.getElementById("autoAlignBtn");
     const resetAngleBtn = document.getElementById("resetAngleBtn");
+    const statusToggleBtn = document.getElementById("statusToggleBtn");
+    const statusCloseBtn = document.getElementById("statusCloseBtn");
     const clearBtn = document.getElementById("clearBtn");
     const setGoalBtn = document.getElementById("setGoalBtn");
     const setInitPoseBtn = document.getElementById("setInitPoseBtn");
@@ -331,6 +454,7 @@ def build_index_html():
 
     let hasInitialFit = false;
     let toolbarCollapsed = false;
+    let statusVisible = false;
 
     function getRotationKey() {
       return "slam_display_rotation_deg";
@@ -338,6 +462,10 @@ def build_index_html():
 
     function getToolbarCollapsedKey() {
       return "slam_toolbar_collapsed";
+    }
+
+    function getStatusVisibleKey() {
+      return "slam_status_visible";
     }
 
     function loadRotation() {
@@ -380,6 +508,24 @@ def build_index_html():
       }
     }
 
+    function loadStatusVisible() {
+      try {
+        return window.localStorage.getItem(getStatusVisibleKey()) === "1";
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function saveStatusVisible() {
+      try {
+        window.localStorage.setItem(
+          getStatusVisibleKey(),
+          statusVisible ? "1" : "0"
+        );
+      } catch (_) {
+      }
+    }
+
     function setToolbarCollapsed(collapsed) {
       toolbarCollapsed = !!collapsed;
       toolbar.classList.toggle("collapsed", toolbarCollapsed);
@@ -387,6 +533,18 @@ def build_index_html():
       toolbarToggleBtn.title = toolbarCollapsed ? "Open options" : "Collapse options";
       toolbarBody.setAttribute("aria-hidden", toolbarCollapsed ? "true" : "false");
       saveToolbarCollapsed();
+    }
+
+    function syncStatusPanelVisibility() {
+      const shouldShow = uiMode === "nav" && statusVisible;
+      statusPanel.style.display = shouldShow ? "block" : "none";
+      setToggleButton(statusToggleBtn, shouldShow);
+    }
+
+    function setStatusVisible(visible) {
+      statusVisible = !!visible;
+      syncStatusPanelVisibility();
+      saveStatusVisible();
     }
 
     function getRotatedBounds(width, height, angle) {
@@ -491,7 +649,7 @@ def build_index_html():
 
       viewPanel.style.display = isView ? "block" : "none";
       navPanel.style.display = isView ? "none" : "block";
-      statusPanel.style.display = isView ? "none" : "block";
+      syncStatusPanelVisibility();
 
       setToggleButton(viewBtn, isView);
       setToggleButton(navBtn, !isView);
@@ -981,12 +1139,16 @@ def build_index_html():
       const goal = state.goal || {};
 
       statusBox.innerHTML = `
-        <div>SLAM: <span class="${slamClass}">${slamOk ? "OK" : "NO MAP"}</span></div>
-        <div>TF: <span class="${tfClass}">${tfOk ? "OK" : "TIMEOUT"}</span></div>
-        <div>Planner: <span class="${plannerClass}">${plannerOk ? "OK" : "IDLE/FAIL"}</span></div>
-        <div>Robot: <span class="mono" style="font-weight:700;color:#ffffff">x=${fmtNum(pose.x)}, y=${fmtNum(pose.y)}, yaw=${fmtNum((pose.theta || 0) * 180.0 / Math.PI, 1)} deg</span></div>
-        <div>Map age: ${fmtAge(state.status.map_age_sec)}</div>
-        <div>Pose age: ${fmtAge(state.status.pose_age_sec)}</div>
+        <div class="row">
+          <span class="status-chip ${slamClass}">SLAM ${slamOk ? "OK" : "NO MAP"}</span>
+          <span class="status-chip ${tfClass}">TF ${tfOk ? "OK" : "TIMEOUT"}</span>
+          <span class="status-chip ${plannerClass}">PLANNER ${plannerOk ? "OK" : "IDLE/FAIL"}</span>
+        </div>
+        <div class="metric-grid">
+          <div>Robot: <span class="mono" style="font-weight:700;color:#ffffff">x=${fmtNum(pose.x)}, y=${fmtNum(pose.y)}, yaw=${fmtNum((pose.theta || 0) * 180.0 / Math.PI, 1)} deg</span></div>
+          <div>Map age: ${fmtAge(state.status.map_age_sec)}</div>
+          <div>Pose age: ${fmtAge(state.status.pose_age_sec)}</div>
+        </div>
       `;
 
       if (goal.x === null || goal.y === null || goal.yaw === null) {
@@ -1213,6 +1375,8 @@ def build_index_html():
     autoAlignBtn.addEventListener("click", autoAlignDisplay);
     resetAngleBtn.addEventListener("click", () => setDisplayRotation(0.0));
     toolbarToggleBtn.addEventListener("click", () => setToolbarCollapsed(!toolbarCollapsed));
+    statusToggleBtn.addEventListener("click", () => setStatusVisible(!statusVisible));
+    statusCloseBtn.addEventListener("click", () => setStatusVisible(false));
 
     clearBtn.addEventListener("click", async () => {
       try {
@@ -1267,6 +1431,7 @@ def build_index_html():
 
     viewRotation = loadRotation();
     setToolbarCollapsed(loadToolbarCollapsed());
+    statusVisible = loadStatusVisible();
     updateAngleInfo();
     applyTransform();
     switchMode("view");
