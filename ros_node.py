@@ -6,7 +6,7 @@ import math
 import os
 import shutil
 import zipfile
-
+from PIL import Image
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -690,8 +690,20 @@ class LiveMapWeb(Node):
         rgb = np.flipud(rgb)
 
         tmp_path = os.path.join(BASE_DIR, "map_tmp.png")
-        plt.imsave(tmp_path, rgb)
-        os.replace(tmp_path, MAP_PNG_PATH)
+
+        try:
+            img_u8 = (np.clip(rgb, 0.0, 1.0) * 255).astype(np.uint8)
+            Image.fromarray(img_u8).save(tmp_path)
+
+            if not os.path.exists(tmp_path):
+                self.get_logger().error(f"map tmp png was not created: {tmp_path}")
+                return
+
+            os.replace(tmp_path, MAP_PNG_PATH)
+
+        except Exception as e:
+            self.get_logger().error(f"failed to render map png: {e}")
+            return
 
         render_origin_x = ox - pad_left * res
         render_origin_y = oy - pad_bottom * res
