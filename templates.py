@@ -89,8 +89,8 @@ def build_index_html():
       border-radius: 16px;
       border: 1px solid rgba(255, 255, 255, 0.08);
       box-shadow: 0 18px 42px rgba(0, 0, 0, 0.30);
-      min-width: 292px;
-      max-width: 380px;
+      min-width: 260px;
+      max-width: 330px;
     }
 
     .toolbar.collapsed {
@@ -116,7 +116,7 @@ def build_index_html():
     .toolbar-body {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
     }
 
     .toolbar.collapsed .toolbar-body {
@@ -137,6 +137,7 @@ def build_index_html():
       border-radius: 14px;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.05);
+      width: fit-content;
     }
 
     .section-card {
@@ -146,8 +147,14 @@ def build_index_html():
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
 
+    .compact-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     .btn {
-      padding: 9px 12px;
+      padding: 9px 11px;
       font-size: 13px;
       border: none;
       border-radius: 10px;
@@ -195,7 +202,23 @@ def build_index_html():
 
     .btn-wide {
       flex: 1 1 0;
-      min-width: 120px;
+      min-width: 0;
+    }
+
+    .action-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .action-grid .btn {
+      width: 100%;
+    }
+
+    .action-grid-top {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
     }
 
     .panel {
@@ -289,6 +312,10 @@ def build_index_html():
       color: #ddd;
     }
 
+    .display-toggles {
+      gap: 10px 12px;
+    }
+
     input[type="file"] {
       display: none;
     }
@@ -319,13 +346,12 @@ def build_index_html():
       </div>
 
       <div id="toolbarBody" class="toolbar-body">
-        <div class="segmented">
-          <button id="viewBtn" class="btn btn-blue btn-toggle active">VIEW</button>
-          <button id="navBtn" class="btn btn-toggle">NAV</button>
-        </div>
-
-        <div class="section-card">
-          <div class="row">
+        <div class="section-card compact-stack">
+          <div class="segmented">
+            <button id="viewBtn" class="btn btn-blue btn-toggle active">VIEW</button>
+            <button id="navBtn" class="btn btn-toggle">NAV</button>
+          </div>
+          <div class="row display-toggles">
             <label class="cb"><input type="checkbox" id="showRobot" checked/>Robot</label>
             <label class="cb"><input type="checkbox" id="showPath" checked/>Path</label>
             <label class="cb"><input type="checkbox" id="showScan" checked/>Scan</label>
@@ -333,13 +359,13 @@ def build_index_html():
           </div>
         </div>
 
-        <div id="viewPanel" class="section-card">
-          <div class="row">
+        <div id="viewPanel" class="section-card compact-stack">
+          <div class="action-grid-top">
             <button id="saveBtn" class="btn btn-blue btn-wide">SAVE MAP</button>
             <button id="loadBtn" class="btn btn-blue btn-wide">LOAD MAP</button>
             <input id="mapFile" type="file" accept=".zip,.bundle.zip"/>
           </div>
-          <div class="row">
+          <div class="action-grid">
             <button id="resetViewBtn" class="btn">RESET VIEW</button>
             <button id="rotateLeftBtn" class="btn">ROTATE -</button>
             <button id="rotateRightBtn" class="btn">ROTATE +</button>
