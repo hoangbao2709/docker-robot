@@ -3,6 +3,7 @@
 
 import copy
 import threading
+import time
 
 LOCK = threading.Lock()
 
@@ -10,6 +11,7 @@ GOAL_REQUEST = None
 INITIAL_POSE_REQUEST = None
 CLEAR_REQUEST = False
 SAVE_REQUEST_NAME = None
+MAP_OVERRIDE = None
 
 SHARED_STATE = {
     "map_version": 0,
@@ -119,6 +121,30 @@ def pop_save_request():
         name = SAVE_REQUEST_NAME
         SAVE_REQUEST_NAME = None
     return name
+
+
+def set_map_override(image_path, map_info, render_info):
+    global MAP_OVERRIDE
+    with LOCK:
+        MAP_OVERRIDE = {
+            "image_path": str(image_path),
+            "map_info": copy.deepcopy(map_info),
+            "render_info": copy.deepcopy(render_info),
+            "map_version": int(time.time() * 1000),
+        }
+
+
+def get_map_override():
+    with LOCK:
+        if MAP_OVERRIDE is None:
+            return None
+        return copy.deepcopy(MAP_OVERRIDE)
+
+
+def clear_map_override():
+    global MAP_OVERRIDE
+    with LOCK:
+        MAP_OVERRIDE = None
 
 
 def get_state_snapshot():
