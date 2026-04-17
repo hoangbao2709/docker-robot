@@ -32,8 +32,10 @@ from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
 from metrics_store import (
     clear_active_path,
     finalize_current_mission,
+    record_intervention,
     record_planner_result,
     record_pose_sample,
+    record_replan,
     set_active_path,
     start_mission,
     update_current_mission,
@@ -508,6 +510,7 @@ class LiveMapWeb(Node):
 
         self.path_xy = None
         clear_active_path()
+        record_intervention("clear path requested")
         finalize_current_mission(status="aborted", result="clear path requested")
 
         path_msg = Path()
@@ -553,6 +556,7 @@ class LiveMapWeb(Node):
             return
 
         try:
+            t0 = time.perf_counter()
             path_xy = plan_path(
                 self.grid,
                 self.map_msg.info,
@@ -561,13 +565,21 @@ class LiveMapWeb(Node):
                 logger=self._SilentPlannerLogger(),
                 safe_clearance_m=self.safe_clearance_m,
             )
+            record_planner_result(
+                time.perf_counter() - t0,
+                path_xy,
+                bool(path_xy and len(path_xy) >= 2),
+                is_replan=True,
+            )
         except Exception as e:
             self.get_logger().warn(f"refresh_active_path failed: {e}")
+            record_planner_result(0.0, None, False, is_replan=True)
             return
 
         if not path_xy or len(path_xy) < 2:
             return
 
+        record_replan()
         self.path_xy = path_xy
         self.publish_path(self.path_xy, self.map_frame)
         set_active_path(self.path_xy)
