@@ -5,6 +5,7 @@ import json
 import math
 import os
 import shutil
+import time
 import zipfile
 from PIL import Image
 import matplotlib
@@ -28,6 +29,15 @@ from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformListener
 
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
+from metrics_store import (
+    clear_active_path,
+    finalize_current_mission,
+    record_planner_result,
+    record_pose_sample,
+    set_active_path,
+    start_mission,
+    update_current_mission,
+)
 from path_planner import plan_path
 from shared_state import (
     get_state_snapshot,
@@ -240,6 +250,7 @@ class LiveMapWeb(Node):
     def send_nav2_goal(self, gx: float, gy: float, goal_yaw: float):
         if not self.nav_to_pose_client.wait_for_server(timeout_sec=2.0):
             self.get_logger().error("NavigateToPose action server not available")
+            finalize_current_mission(status="failed", result="action server unavailable")
             return False
 
         goal_msg = NavigateToPose.Goal()
@@ -266,10 +277,12 @@ class LiveMapWeb(Node):
             goal_handle = future.result()
         except Exception as e:
             self.get_logger().error(f"Nav2 goal send failed: {e}")
+            finalize_current_mission(status="failed", result=f"goal send failed: {e}")
             return
 
         if not goal_handle.accepted:
             self.get_logger().warn("Nav2 goal was rejected")
+            finalize_current_mission(status="failed", result="nav2 goal rejected")
 
             def _upd(state):
                 state["status"]["planner_ok"] = False
@@ -280,6 +293,7 @@ class LiveMapWeb(Node):
             return
 
         self.get_logger().info("Nav2 goal accepted")
+        update_current_mission(status="accepted", result="nav2 goal accepted")
         self._nav_result_future = goal_handle.get_result_async()
         self._nav_result_future.add_done_callback(self._nav_result_callback)
 
@@ -287,6 +301,19 @@ class LiveMapWeb(Node):
         try:
             result = future.result().result
             self.get_logger().info(f"Nav2 goal finished: {result}")
+            snapshot = get_state_snapshot()
+            pose = snapshot.get("pose") or {}
+            pose_sample = None
+            if pose.get("ok"):
+                pose_sample = {
+                    "x": float(pose["x"]),
+                    "y": float(pose["y"]),
+                }
+            finalize_current_mission(
+                status="completed",
+                result=str(result),
+                pose=pose_sample,
+            )
 
             def _upd(state):
                 state["status"]["planner_msg"] = "nav2 goal finished"
@@ -296,6 +323,19 @@ class LiveMapWeb(Node):
 
         except Exception as e:
             self.get_logger().error(f"Nav2 goal result failed: {e}")
+            snapshot = get_state_snapshot()
+            pose = snapshot.get("pose") or {}
+            pose_sample = None
+            if pose.get("ok"):
+                pose_sample = {
+                    "x": float(pose["x"]),
+                    "y": float(pose["y"]),
+                }
+            finalize_current_mission(
+                status="failed",
+                result=f"nav2 result error: {e}",
+                pose=pose_sample,
+            )
 
             def _upd(state):
                 state["status"]["planner_ok"] = False
@@ -386,6 +426,7 @@ class LiveMapWeb(Node):
             return
 
         try:
+            t0 = time.perf_counter()
             self.path_xy = plan_path(
                 self.grid,
                 self.map_msg.info,
@@ -394,9 +435,15 @@ class LiveMapWeb(Node):
                 logger=self.get_logger(),
                 safe_clearance_m=self.safe_clearance_m,
             )
+            record_planner_result(
+                time.perf_counter() - t0,
+                self.path_xy,
+                bool(self.path_xy and len(self.path_xy) >= 2),
+            )
         except Exception as e:
             self.path_xy = None
             self.get_logger().error(f"Planner error: {e}")
+            record_planner_result(0.0, None, False)
 
         def _upd_goal_requested(state):
             state["goal"]["x"] = float(requested_gx)
@@ -408,6 +455,14 @@ class LiveMapWeb(Node):
             state["status"]["last_update"] = now_sec()
 
         update_shared_state(_upd_goal_requested)
+        start_mission(
+            {
+                "x": requested_gx,
+                "y": requested_gy,
+                "yaw": goal_yaw,
+            },
+            planned_path=self.path_xy,
+        )
 
         if self.path_xy and len(self.path_xy) >= 2:
             planned_gx, planned_gy = self.path_xy[-1]
@@ -420,6 +475,7 @@ class LiveMapWeb(Node):
 
             self.send_nav2_goal(requested_gx, requested_gy, goal_yaw)
             self.publish_path(self.path_xy, self.map_frame)
+            set_active_path(self.path_xy)
 
             pts = self.path_xy_to_display_points(
                 self.path_xy,
@@ -436,6 +492,7 @@ class LiveMapWeb(Node):
         else:
             self.get_logger().warn("Planner khong tra ve duong di hop le.")
             self.send_nav2_goal(requested_gx, requested_gy, goal_yaw)
+            clear_active_path()
 
             def _upd_fail(state):
                 state["paths"]["a_star"] = []
@@ -450,6 +507,8 @@ class LiveMapWeb(Node):
             return
 
         self.path_xy = None
+        clear_active_path()
+        finalize_current_mission(status="aborted", result="clear path requested")
 
         path_msg = Path()
         path_msg.header.stamp = self.get_clock().now().to_msg()
@@ -511,6 +570,7 @@ class LiveMapWeb(Node):
 
         self.path_xy = path_xy
         self.publish_path(self.path_xy, self.map_frame)
+        set_active_path(self.path_xy)
 
         pts = self.path_xy_to_display_points(
             self.path_xy,
@@ -753,6 +813,7 @@ class LiveMapWeb(Node):
                 state["status"]["last_update"] = tnow
 
             update_shared_state(_upd)
+            record_pose_sample(tnow, x, y, yaw, True)
 
         except Exception:
             def _upd(state):

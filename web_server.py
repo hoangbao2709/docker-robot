@@ -10,6 +10,12 @@ from urllib.parse import parse_qs, urlparse
 from points_store import load_points, upsert_point, get_point, delete_point
 from cartographer_manager import get_slam_status
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
+from metrics_store import (
+    clear_reference_trajectory,
+    get_metrics_snapshot,
+    reset_metrics,
+    set_reference_trajectory,
+)
 from shared_state import (
     clear_map_override,
     get_map_override,
@@ -145,6 +151,10 @@ class ImageServer(BaseHTTPRequestHandler):
 
         if path == "/slam_status":
             self._send_json(200, get_slam_status())
+            return
+
+        if path == "/metrics":
+            self._send_json(200, get_metrics_snapshot())
             return
 
         if path.startswith("/set_goal_pose"):
@@ -321,6 +331,39 @@ class ImageServer(BaseHTTPRequestHandler):
                     "success": True,
                     "name": safe_name,
                     "point": point,
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+
+        if path == "/metrics/reset":
+            reset_metrics()
+            self._send_json(200, {
+                "success": True,
+                "message": "metrics reset",
+            })
+            return
+
+        if path == "/metrics/reference":
+            try:
+                body = self._read_json_body()
+                samples = body.get("samples") or []
+                label = body.get("label")
+                if not isinstance(samples, list):
+                    raise ValueError("samples must be a list")
+                if not samples:
+                    clear_reference_trajectory()
+                    self._send_json(200, {
+                        "success": True,
+                        "message": "reference trajectory cleared",
+                    })
+                    return
+                set_reference_trajectory(samples, label=label)
+                self._send_json(200, {
+                    "success": True,
+                    "message": "reference trajectory loaded",
+                    "count": len(samples),
+                    "label": label or "reference",
                 })
             except Exception as e:
                 self.send_error(400, f"bad request: {e}")
