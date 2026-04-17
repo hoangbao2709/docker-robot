@@ -15,6 +15,7 @@ from metrics_store import (
     get_metrics_snapshot,
     reset_metrics,
     set_reference_trajectory,
+    update_run_meta,
 )
 from shared_state import (
     clear_map_override,
@@ -364,6 +365,31 @@ class ImageServer(BaseHTTPRequestHandler):
                     "message": "reference trajectory loaded",
                     "count": len(samples),
                     "label": label or "reference",
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+
+        if path == "/metrics/config":
+            try:
+                body = self._read_json_body()
+                update_run_meta(
+                    method=body.get("method"),
+                    route_id=body.get("route_id"),
+                    trial_id=body.get("trial_id"),
+                    condition=body.get("condition"),
+                    weighting_mode=body.get("weighting_mode"),
+                )
+                self._send_json(200, {
+                    "success": True,
+                    "message": "metrics config updated",
+                    "config": {
+                        "method": body.get("method"),
+                        "route_id": body.get("route_id"),
+                        "trial_id": body.get("trial_id"),
+                        "condition": body.get("condition"),
+                        "weighting_mode": body.get("weighting_mode"),
+                    },
                 })
             except Exception as e:
                 self.send_error(400, f"bad request: {e}")
