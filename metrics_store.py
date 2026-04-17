@@ -464,7 +464,11 @@ def _field_status_map(snapshot):
     }
 
 
-def get_metrics_snapshot():
+def get_metrics_snapshot(
+    include_trajectory=False,
+    include_pose_traces=False,
+    include_reference_trajectory=False,
+):
     with LOCK:
         snapshot = copy.deepcopy(METRICS)
 
@@ -485,5 +489,28 @@ def get_metrics_snapshot():
             "derived": "computed from measured data",
             "unsupported": "not available in the current robot-side stack",
         },
+    }
+
+    if not include_pose_traces:
+        for mission in snapshot["missions"]:
+            mission.pop("pose_trace", None)
+        if snapshot["current_mission"] is not None:
+            snapshot["current_mission"].pop("pose_trace", None)
+
+    if not include_trajectory:
+        snapshot.pop("trajectory", None)
+        snapshot.pop("current_path", None)
+
+    if not include_reference_trajectory:
+        snapshot["reference"] = {
+            "label": snapshot["reference"].get("label"),
+            "loaded_at": snapshot["reference"].get("loaded_at"),
+            "sample_count": len(snapshot["reference"].get("trajectory") or []),
+        }
+
+    snapshot["payload_mode"] = {
+        "trajectory": bool(include_trajectory),
+        "pose_traces": bool(include_pose_traces),
+        "reference_trajectory": bool(include_reference_trajectory),
     }
     return snapshot
