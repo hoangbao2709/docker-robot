@@ -213,6 +213,87 @@ def a_star_grid(
     return None
 
 
+def _bresenham_cells(a: Tuple[int, int], b: Tuple[int, int]) -> List[Tuple[int, int]]:
+    """Return the grid cells crossed by the segment from a to b."""
+    r0, c0 = a
+    r1, c1 = b
+
+    dr = abs(r1 - r0)
+    dc = abs(c1 - c0)
+    sr = 1 if r0 < r1 else -1
+    sc = 1 if c0 < c1 else -1
+
+    cells: List[Tuple[int, int]] = []
+    r, c = r0, c0
+
+    if dc > dr:
+        err = dc // 2
+        while c != c1:
+            cells.append((r, c))
+            err -= dr
+            if err < 0:
+                r += sr
+                err += dc
+            c += sc
+    else:
+        err = dr // 2
+        while r != r1:
+            cells.append((r, c))
+            err -= dc
+            if err < 0:
+                c += sc
+                err += dr
+            r += sr
+
+    cells.append((r1, c1))
+    return cells
+
+
+def has_line_of_sight(
+    grid: np.ndarray,
+    start: Tuple[int, int],
+    goal: Tuple[int, int],
+) -> bool:
+    """Check whether a straight segment stays inside free cells."""
+    h, w = grid.shape
+    for r, c in _bresenham_cells(start, goal):
+        if not (0 <= r < h and 0 <= c < w):
+            return False
+        if grid[r, c] != 0:
+            return False
+    return True
+
+
+def simplify_cell_path(
+    grid: np.ndarray,
+    cell_path: List[Tuple[int, int]],
+) -> List[Tuple[int, int]]:
+    """
+    Remove intermediate A* waypoints when the current anchor can already see
+    a farther waypoint on the inflated planning grid.
+    """
+    if len(cell_path) <= 2:
+        return cell_path
+
+    simplified = [cell_path[0]]
+    anchor_idx = 0
+
+    while anchor_idx < len(cell_path) - 1:
+        furthest_idx = anchor_idx + 1
+        probe_idx = furthest_idx
+
+        while probe_idx < len(cell_path):
+            if not has_line_of_sight(grid, cell_path[anchor_idx], cell_path[probe_idx]):
+                break
+            furthest_idx = probe_idx
+            probe_idx += 1
+
+        simplified.append(cell_path[furthest_idx])
+        anchor_idx = furthest_idx
+
+    return simplified
+
+
 # ==============================================================
 #                      API chính: plan_path
 # ==============================================================
@@ -291,11 +372,16 @@ def plan_path(
         warn(f"[plan_path] {label}: A* không tìm được đường.")
         return None
 
+    smooth_cell_path = simplify_cell_path(grid_for_plan, cell_path)
+
     # Cell -> world
     path_xy: List[Tuple[float, float]] = []
-    for r, c in cell_path:
+    for r, c in smooth_cell_path:
         x, y = cell_to_world(r, c, map_info)
         path_xy.append((x, y))
 
-    log(f"[plan_path] {label}: Path length = {len(path_xy)}")
+    log(
+        f"[plan_path] {label}: Path length = {len(path_xy)} "
+        f"(raw={len(cell_path)} cells, smooth={len(smooth_cell_path)} cells)"
+    )
     return path_xy
