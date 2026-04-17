@@ -155,7 +155,19 @@ class ImageServer(BaseHTTPRequestHandler):
             return
 
         if path == "/metrics":
-            self._send_json(200, get_metrics_snapshot())
+            qs = parse_qs(parsed.query)
+            full = qs.get("full", ["0"])[0] == "1"
+            include_trajectory = full or qs.get("trajectory", ["0"])[0] == "1"
+            include_pose_traces = full or qs.get("pose_traces", ["0"])[0] == "1"
+            include_reference_trajectory = full or qs.get("reference_trajectory", ["0"])[0] == "1"
+            self._send_json(
+                200,
+                get_metrics_snapshot(
+                    include_trajectory=include_trajectory,
+                    include_pose_traces=include_pose_traces,
+                    include_reference_trajectory=include_reference_trajectory,
+                ),
+            )
             return
 
         if path.startswith("/set_goal_pose"):
