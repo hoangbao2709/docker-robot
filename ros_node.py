@@ -5,17 +5,13 @@ import json
 import math
 import os
 import shutil
-import time
 import zipfile
 from PIL import Image
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import rclpy
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Path
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -33,14 +29,11 @@ from metrics_store import (
     clear_active_path,
     finalize_current_mission,
     record_intervention,
-    record_planner_result,
     record_pose_sample,
-    record_replan,
     set_active_path,
     start_mission,
     update_current_mission,
 )
-from path_planner import plan_path
 from shared_state import (
     get_state_snapshot,
     pop_clear_request,
@@ -58,10 +51,19 @@ class LiveMapWeb(Node):
 
         self.map_topic = os.environ.get("MAP_TOPIC", "/map")
         self.scan_topic = os.environ.get("SCAN_TOPIC", "/scan")
+        self.plan_topic = os.environ.get("PLAN_TOPIC", "/plan")
+        self.received_plan_topic = os.environ.get(
+            "RECEIVED_PLAN_TOPIC",
+            "/received_global_plan",
+        )
         self.base_frame = os.environ.get("BASE_FRAME", "base_link")
-        self.safe_clearance_m = float(os.environ.get("SAFE_CLEARANCE_M", "0.12"))
         self.scan_stride = int(os.environ.get("SCAN_STRIDE", "2"))
         self.scan_max_points = int(os.environ.get("SCAN_MAX_POINTS", "720"))
+        
+#        self.goal_pose_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.cmd_vel_nav_pub = self.create_publisher(Twist, "/cmd_vel_nav", 10)
+        self.cmd_vel_safe_pub = self.create_publisher(Twist, "/cmd_vel_safe", 10)
 
         self.map_msg = None
         self.map_frame = "map"
@@ -82,8 +84,24 @@ class LiveMapWeb(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, "/navigate_to_pose")
+        self.compute_path_client = ActionClient(
+            self,
+            ComputePathToPose,
+            "/compute_path_to_pose",
+        )
+        self._nav_goal_handle = None
         self._nav_goal_future = None
         self._nav_result_future = None
+        self._compute_path_goal_future = None
+        self._compute_path_result_future = None
+
+        self.local_plan_topic = os.environ.get("LOCAL_PLAN_TOPIC", "/local_plan")
+        self.create_subscription(
+            Path,
+            self.local_plan_topic,
+            self.cb_local_plan,
+            10,
+        )
 
         qos_map = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -113,27 +131,77 @@ class LiveMapWeb(Node):
             qos_scan,
         )
 
-        self.path_pub = self.create_publisher(Path, "/a_star_path", 1)
+        self.create_subscription(
+            Path,
+            self.plan_topic,
+            self.cb_nav_plan,
+            10,
+        )
+        self.create_subscription(
+            Path,
+            self.received_plan_topic,
+            self.cb_received_plan,
+            10,
+        )
 
         self.initialpose_pub = self.create_publisher(
             PoseWithCovarianceStamped,
             "/initialpose",
             10,
         )
+        self.goal_pose_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
 
         self.get_logger().info(
-            f"[slam_live_map] HTTP: http://<IP_RPI>:8080/ | map={self.map_topic} | scan={self.scan_topic} | base_frame={self.base_frame}"
+            f"[slam_live_map] HTTP: http://<IP_RPI>:8080/ | map={self.map_topic} | scan={self.scan_topic} | plan={self.plan_topic} | received_plan={self.received_plan_topic} | base_frame={self.base_frame}"
         )
 
-        self.fast_timer = self.create_timer(0.15, self.fast_tick)
-        self.slow_timer = self.create_timer(1.0, self.slow_tick)
+        self.fast_timer = self.create_timer(0.5, self.fast_tick)
+        self.slow_timer = self.create_timer(2.0, self.slow_tick)
+    def publish_stop_cmd(self):
+        msg = Twist()
 
-    class _SilentPlannerLogger:
-        def info(self, *_args, **_kwargs):
-            return
+        for _ in range(5):
+            self.cmd_vel_pub.publish(msg)
+            self.cmd_vel_nav_pub.publish(msg)
+            self.cmd_vel_safe_pub.publish(msg)
+    def cb_local_plan(self, msg: Path):
+        points = [
+            {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
+            for p in msg.poses
+        ]
 
-        def warn(self, *_args, **_kwargs):
-            return
+        def _upd(state):
+            state["paths"]["local_plan"] = points
+            state["status"]["last_update"] = now_sec()
+
+        update_shared_state(_upd)
+    def update_nav_path_display(self, path_xy, source: str, path_key: str = "plan"):
+        points = [{"x": float(x), "y": float(y)} for x, y in (path_xy or [])]
+        path_key = path_key if path_key in ("plan", "received_plan") else "plan"
+
+        if path_key == "received_plan" or not self.path_xy:
+            self.path_xy = [(p["x"], p["y"]) for p in points]
+
+            if self.path_xy:
+                set_active_path(self.path_xy)
+            else:
+                clear_active_path()
+
+        def _upd(state):
+            state["paths"][path_key] = points
+            if path_key == "received_plan":
+                state["paths"]["nav2"] = points
+                state["paths"]["a_star"] = points
+            elif not state["paths"].get("received_plan"):
+                state["paths"]["nav2"] = points
+                state["paths"]["a_star"] = points
+            state["status"]["planner_ok"] = bool(points)
+            state["status"]["planner_msg"] = (
+                f"{source} ({len(points)} pts)" if points else f"{source} empty"
+            )
+            state["status"]["last_update"] = now_sec()
+
+        update_shared_state(_upd)
 
     def cb_map(self, msg: OccupancyGrid):
         self.map_msg = msg
@@ -249,6 +317,48 @@ class LiveMapWeb(Node):
 
         update_shared_state(_upd)
 
+    def cb_nav_plan(self, msg: Path):
+        path_xy = [
+            (float(pose.pose.position.x), float(pose.pose.position.y))
+            for pose in msg.poses
+        ]
+        self.update_nav_path_display(
+            path_xy,
+            f"nav2 topic {self.plan_topic}",
+            path_key="plan",
+        )
+
+    def cb_received_plan(self, msg: Path):
+        path_xy = [
+            (float(pose.pose.position.x), float(pose.pose.position.y))
+            for pose in msg.poses
+        ]
+        self.update_nav_path_display(
+            path_xy,
+            f"nav2 topic {self.received_plan_topic}",
+            path_key="received_plan",
+        )
+
+    def make_goal_pose_msg(self, gx: float, gy: float, goal_yaw: float):
+        msg = PoseStamped()
+        msg.header.frame_id = self.map_frame
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.position.x = gx
+        msg.pose.position.y = gy
+        msg.pose.position.z = 0.0
+
+        qz, qw = yaw_to_quat(goal_yaw)
+        msg.pose.orientation.z = qz
+        msg.pose.orientation.w = qw
+        return msg
+
+    def publish_goal_pose_topic(self, gx: float, gy: float, goal_yaw: float):
+        msg = self.make_goal_pose_msg(gx, gy, goal_yaw)
+        self.goal_pose_pub.publish(msg)
+        self.get_logger().info(
+            f"Published /goal_pose: x={gx:.2f}, y={gy:.2f}, yaw={math.degrees(goal_yaw):.1f} deg"
+        )
+
     def send_nav2_goal(self, gx: float, gy: float, goal_yaw: float):
         if not self.nav_to_pose_client.wait_for_server(timeout_sec=2.0):
             self.get_logger().error("NavigateToPose action server not available")
@@ -256,15 +366,7 @@ class LiveMapWeb(Node):
             return False
 
         goal_msg = NavigateToPose.Goal()
-        goal_msg.pose.header.frame_id = self.map_frame
-        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-        goal_msg.pose.pose.position.x = gx
-        goal_msg.pose.pose.position.y = gy
-        goal_msg.pose.pose.position.z = 0.0
-
-        qz, qw = yaw_to_quat(goal_yaw)
-        goal_msg.pose.pose.orientation.z = qz
-        goal_msg.pose.pose.orientation.w = qw
+        goal_msg.pose = self.make_goal_pose_msg(gx, gy, goal_yaw)
 
         self.get_logger().info(
             f"Sending Nav2 goal: x={gx:.2f}, y={gy:.2f}, yaw={math.degrees(goal_yaw):.1f} deg"
@@ -274,15 +376,117 @@ class LiveMapWeb(Node):
         self._nav_goal_future.add_done_callback(self._nav_goal_response_callback)
         return True
 
+    def request_nav2_plan(self, gx: float, gy: float, goal_yaw: float):
+        if not self.compute_path_client.wait_for_server(timeout_sec=0.5):
+            self.get_logger().warn("ComputePathToPose action server not available")
+
+            def _upd(state):
+                state["status"]["planner_msg"] = (
+                    f"nav2 goal sent, waiting for path topic {self.plan_topic}"
+                )
+                state["status"]["last_update"] = now_sec()
+
+            update_shared_state(_upd)
+            return False
+
+        goal_msg = ComputePathToPose.Goal()
+        goal_msg.goal.header.frame_id = self.map_frame
+        goal_msg.goal.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.goal.pose.position.x = gx
+        goal_msg.goal.pose.position.y = gy
+        goal_msg.goal.pose.position.z = 0.0
+
+        qz, qw = yaw_to_quat(goal_yaw)
+        goal_msg.goal.pose.orientation.z = qz
+        goal_msg.goal.pose.orientation.w = qw
+
+        if hasattr(goal_msg, "planner_id"):
+            goal_msg.planner_id = ""
+        if hasattr(goal_msg, "use_start"):
+            goal_msg.use_start = False
+
+        self._compute_path_goal_future = self.compute_path_client.send_goal_async(goal_msg)
+        self._compute_path_goal_future.add_done_callback(
+            self._compute_path_goal_response_callback
+        )
+        return True
+
+    def _compute_path_goal_response_callback(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as e:
+            self.get_logger().warn(f"ComputePathToPose send failed: {e}")
+
+            def _upd(state):
+                state["status"]["planner_msg"] = f"nav2 path request failed: {e}"
+                state["status"]["last_update"] = now_sec()
+
+            update_shared_state(_upd)
+            return
+
+        if not goal_handle.accepted:
+            self.get_logger().warn("ComputePathToPose request was rejected")
+
+            def _upd(state):
+                state["status"]["planner_msg"] = "nav2 path request rejected"
+                state["status"]["last_update"] = now_sec()
+
+            update_shared_state(_upd)
+            return
+
+        self._compute_path_result_future = goal_handle.get_result_async()
+        self._compute_path_result_future.add_done_callback(
+            self._compute_path_result_callback
+        )
+
+    def _compute_path_result_callback(self, future):
+        try:
+            result = future.result().result
+            path_msg = getattr(result, "path", None)
+            path_xy = []
+            if path_msg is not None:
+                path_xy = [
+                    (float(pose.pose.position.x), float(pose.pose.position.y))
+                    for pose in path_msg.poses
+                ]
+
+            if path_xy:
+                self.update_nav_path_display(path_xy, "nav2 computed path")
+                return
+
+            error_msg = getattr(result, "error_msg", "") or "empty path"
+            self.get_logger().warn(f"ComputePathToPose returned no path: {error_msg}")
+
+            def _upd(state):
+                state["paths"]["nav2"] = []
+                state["paths"]["a_star"] = []
+                state["status"]["planner_ok"] = False
+                state["status"]["planner_msg"] = f"nav2 path empty: {error_msg}"
+                state["status"]["last_update"] = now_sec()
+
+            update_shared_state(_upd)
+
+        except Exception as e:
+            self.get_logger().warn(f"ComputePathToPose result failed: {e}")
+
+            def _upd(state):
+                state["status"]["planner_ok"] = False
+                state["status"]["planner_msg"] = f"nav2 path result error: {e}"
+                state["status"]["last_update"] = now_sec()
+
+            update_shared_state(_upd)
+
     def _nav_goal_response_callback(self, future):
         try:
             goal_handle = future.result()
         except Exception as e:
+            self._nav_goal_handle = None
             self.get_logger().error(f"Nav2 goal send failed: {e}")
             finalize_current_mission(status="failed", result=f"goal send failed: {e}")
             return
 
         if not goal_handle.accepted:
+            self._nav_goal_handle = None
             self.get_logger().warn("Nav2 goal was rejected")
             finalize_current_mission(status="failed", result="nav2 goal rejected")
 
@@ -295,11 +499,13 @@ class LiveMapWeb(Node):
             return
 
         self.get_logger().info("Nav2 goal accepted")
+        self._nav_goal_handle = goal_handle
         update_current_mission(status="accepted", result="nav2 goal accepted")
         self._nav_result_future = goal_handle.get_result_async()
         self._nav_result_future.add_done_callback(self._nav_result_callback)
 
     def _nav_result_callback(self, future):
+        self._nav_goal_handle = None
         try:
             result = future.result().result
             self.get_logger().info(f"Nav2 goal finished: {result}")
@@ -374,7 +580,7 @@ class LiveMapWeb(Node):
 
     def process_initial_pose_request_if_any(self):
         req = pop_initial_pose_request()
-        if req is None or self.map_msg is None or self.grid is None:
+        if req is None:
             return
 
         init_yaw = req["yaw"]
@@ -407,99 +613,49 @@ class LiveMapWeb(Node):
 
     def process_goal_request_if_any(self):
         req = pop_goal_request()
-        if req is None or self.map_msg is None or self.grid is None:
+        if req is None:
             return
 
         goal_yaw = req["yaw"]
         requested_gx = float(req["x"])
         requested_gy = float(req["y"])
 
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                self.map_frame,
-                self.base_frame,
-                rclpy.time.Time(),
-                timeout=Duration(seconds=0.2),
-            )
-            rx = tf.transform.translation.x
-            ry = tf.transform.translation.y
-        except Exception as e:
-            self.get_logger().warn(f"Khong lay duoc TF {self.map_frame}->{self.base_frame}: {e}")
-            return
-
-        try:
-            t0 = time.perf_counter()
-            self.path_xy = plan_path(
-                self.grid,
-                self.map_msg.info,
-                (rx, ry),
-                (requested_gx, requested_gy),
-                logger=self.get_logger(),
-                safe_clearance_m=self.safe_clearance_m,
-            )
-            record_planner_result(
-                time.perf_counter() - t0,
-                self.path_xy,
-                bool(self.path_xy and len(self.path_xy) >= 2),
-            )
-        except Exception as e:
-            self.path_xy = None
-            self.get_logger().error(f"Planner error: {e}")
-            record_planner_result(0.0, None, False)
-
         def _upd_goal_requested(state):
             state["goal"]["x"] = float(requested_gx)
             state["goal"]["y"] = float(requested_gy)
             state["goal"]["yaw"] = float(goal_yaw)
             state["goal"]["stamp"] = now_sec()
+            state["paths"]["nav2"] = []
+            state["paths"]["a_star"] = []
             state["status"]["planner_ok"] = False
-            state["status"]["planner_msg"] = "planning..."
+            state["status"]["planner_msg"] = "sending nav2 goal..."
             state["status"]["last_update"] = now_sec()
 
         update_shared_state(_upd_goal_requested)
+
         start_mission(
             {
                 "x": requested_gx,
                 "y": requested_gy,
                 "yaw": goal_yaw,
-            },
-            planned_path=self.path_xy,
+            }
         )
 
-        if self.path_xy and len(self.path_xy) >= 2:
-            planned_gx, planned_gy = self.path_xy[-1]
+        if self.send_nav2_goal(requested_gx, requested_gy, goal_yaw):
+            # self.publish_goal_pose_topic(requested_gx, requested_gy, goal_yaw)
 
-            self.get_logger().info(
-                f"Goal requested=({requested_gx:.2f},{requested_gy:.2f}), "
-                f"planner_end=({planned_gx:.2f},{planned_gy:.2f}), "
-                f"yaw={math.degrees(goal_yaw):.1f} deg | robot=({rx:.2f},{ry:.2f})"
-            )
-
-            self.send_nav2_goal(requested_gx, requested_gy, goal_yaw)
-            self.publish_path(self.path_xy, self.map_frame)
-            set_active_path(self.path_xy)
-
-            pts = self.path_xy_to_display_points(
-                self.path_xy,
-                goal_xy=(requested_gx, requested_gy),
-            )
-
-            def _upd_ok(state):
-                state["paths"]["a_star"] = pts
-                state["status"]["planner_ok"] = True
-                state["status"]["planner_msg"] = f"path ok ({len(pts)} pts), nav2 goal sent"
+            def _upd_sent(state):
+                state["status"]["planner_msg"] = "nav2 goal sent, requesting path..."
                 state["status"]["last_update"] = now_sec()
 
-            update_shared_state(_upd_ok)
+            update_shared_state(_upd_sent)
+            self.request_nav2_plan(requested_gx, requested_gy, goal_yaw)
         else:
-            self.get_logger().warn("Planner khong tra ve duong di hop le.")
-            self.send_nav2_goal(requested_gx, requested_gy, goal_yaw)
             clear_active_path()
 
             def _upd_fail(state):
-                state["paths"]["a_star"] = []
                 state["status"]["planner_ok"] = False
-                state["status"]["planner_msg"] = "planner failed, nav2 goal sent"
+                state["status"]["planner_msg"] = "nav2 action server unavailable"
                 state["status"]["last_update"] = now_sec()
 
             update_shared_state(_upd_fail)
@@ -513,89 +669,32 @@ class LiveMapWeb(Node):
         record_intervention("clear path requested")
         finalize_current_mission(status="aborted", result="clear path requested")
 
-        path_msg = Path()
-        path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = self.map_frame
-        self.path_pub.publish(path_msg)
+        if self._nav_goal_handle is not None:
+            try:
+                self._nav_goal_handle.cancel_goal_async()
+            except Exception as e:
+                self.get_logger().warn(f"Cancel nav2 goal failed: {e}")
+
+        self._nav_goal_handle = None
+        self.publish_stop_cmd()
 
         def _upd(state):
             state["goal"]["x"] = None
             state["goal"]["y"] = None
             state["goal"]["yaw"] = None
             state["goal"]["stamp"] = now_sec()
+            state["paths"]["nav2"] = []
             state["paths"]["a_star"] = []
+            state["paths"]["plan"] = []
+            state["paths"]["received_plan"] = []
+            state["paths"]["local_plan"] = []
+
             state["status"]["planner_ok"] = False
-            state["status"]["planner_msg"] = "cleared"
+            state["status"]["planner_msg"] = "stopped and cleared"
             state["status"]["last_update"] = now_sec()
 
         update_shared_state(_upd)
-        self.get_logger().info("Clear path request: published empty /a_star_path.")
-
-    def refresh_active_path(self):
-        if self.map_msg is None or self.grid is None:
-            return
-
-        snapshot = get_state_snapshot()
-        goal = snapshot.get("goal") or {}
-        gx = goal.get("x")
-        gy = goal.get("y")
-
-        if gx is None or gy is None:
-            return
-
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                self.map_frame,
-                self.base_frame,
-                rclpy.time.Time(),
-                timeout=Duration(seconds=0.08),
-            )
-            rx = tf.transform.translation.x
-            ry = tf.transform.translation.y
-        except Exception:
-            return
-
-        try:
-            t0 = time.perf_counter()
-            path_xy = plan_path(
-                self.grid,
-                self.map_msg.info,
-                (rx, ry),
-                (float(gx), float(gy)),
-                logger=self._SilentPlannerLogger(),
-                safe_clearance_m=self.safe_clearance_m,
-            )
-            record_planner_result(
-                time.perf_counter() - t0,
-                path_xy,
-                bool(path_xy and len(path_xy) >= 2),
-                is_replan=True,
-            )
-        except Exception as e:
-            self.get_logger().warn(f"refresh_active_path failed: {e}")
-            record_planner_result(0.0, None, False, is_replan=True)
-            return
-
-        if not path_xy or len(path_xy) < 2:
-            return
-
-        record_replan()
-        self.path_xy = path_xy
-        self.publish_path(self.path_xy, self.map_frame)
-        set_active_path(self.path_xy)
-
-        pts = self.path_xy_to_display_points(
-            self.path_xy,
-            goal_xy=(float(gx), float(gy)),
-        )
-
-        def _upd(state):
-            state["paths"]["a_star"] = pts
-            state["status"]["planner_ok"] = True
-            state["status"]["planner_msg"] = f"path refresh ok ({len(pts)} pts)"
-            state["status"]["last_update"] = now_sec()
-
-        update_shared_state(_upd)
+        self.get_logger().info("Clear path request: nav2 goal cancel requested.")
 
     def process_save_request_if_any(self):
         name = pop_save_request()
@@ -691,44 +790,6 @@ class LiveMapWeb(Node):
                 zf.write(preview_png_path, arcname="preview.png")
             zf.write(pgm_path, arcname=os.path.basename(pgm_path))
             zf.write(yaml_path, arcname=os.path.basename(yaml_path))
-
-    def publish_path(self, path_xy, frame_id: str):
-        path_msg = Path()
-        path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = frame_id
-
-        for (x, y) in path_xy:
-            pose = PoseStamped()
-            pose.header.frame_id = frame_id
-            pose.header.stamp = path_msg.header.stamp
-            pose.pose.position.x = x
-            pose.pose.position.y = y
-            pose.pose.position.z = 0.0
-            pose.pose.orientation.w = 1.0
-            path_msg.poses.append(pose)
-
-        self.path_pub.publish(path_msg)
-
-        self.get_logger().info(
-            f"Published path with {len(path_msg.poses)} poses to /a_star_path"
-        )
-
-    def path_xy_to_display_points(self, path_xy, goal_xy=None):
-        pts = [{"x": float(x), "y": float(y)} for (x, y) in path_xy]
-
-        if not pts or goal_xy is None:
-            return pts
-
-        gx, gy = float(goal_xy[0]), float(goal_xy[1])
-        last = pts[-1]
-        gap = math.hypot(last["x"] - gx, last["y"] - gy)
-
-        # If the planner snapped the goal to a nearby free cell, keep the
-        # visual path connected to the user-selected goal.
-        if gap > 1e-6 and gap <= max(0.30, self.safe_clearance_m * 3.0):
-            pts.append({"x": gx, "y": gy})
-
-        return pts
 
     def render_map_png_if_needed(self):
         if not self.map_dirty or self.map_msg is None:
@@ -858,5 +919,3 @@ class LiveMapWeb(Node):
 
     def slow_tick(self):
         self.render_map_png_if_needed()
-        self.refresh_active_path()
-

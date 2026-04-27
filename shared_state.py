@@ -31,7 +31,10 @@ SHARED_STATE = {
         "stamp": 0.0,
     },
     "paths": {
-        "a_star": [],
+        # "a_star": [],
+        "plan": [],
+        "local_plan": [],
+        "received_plan": [],
     },
     "scan": {
         "points": [],

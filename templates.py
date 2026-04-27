@@ -1139,7 +1139,17 @@ def build_index_html():
       }
 
       if (showPath.checked) {
-         drawPath(getDisplayPath(lastState.paths.a_star), "rgba(255,70,120,0.9)", 1.2);
+        drawPath(
+          getDisplayPath(lastState.paths.received_plan || lastState.paths.plan),
+          "rgba(0,180,255,0.95)",
+          3.0
+        );
+
+        drawPath(
+          getDisplayPath(lastState.paths.local_plan),
+          "rgba(255,80,80,0.95)",
+          2.0
+        );
       }
 
       if (lastState.pose && lastState.pose.ok) {
@@ -1463,7 +1473,7 @@ def build_index_html():
     switchMode("view");
     fetchState();
     fetchSlamStatus();
-    setInterval(fetchState, 300);
+    setInterval(fetchState, 1000);
     setInterval(fetchSlamStatus, 3000);
   </script>
 </body>
