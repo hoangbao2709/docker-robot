@@ -57,7 +57,7 @@ class LiveMapWeb(Node):
             "/received_global_plan",
         )
         self.base_frame = os.environ.get("BASE_FRAME", "base_link")
-        self.enable_scan_points = os.environ.get("ENABLE_SCAN_POINTS", "0") == "1"
+        self.enable_scan_points = os.environ.get("ENABLE_SCAN_POINTS", "1") == "1"
         self.scan_stride = int(os.environ.get("SCAN_STRIDE", "4"))
         self.scan_max_points = int(os.environ.get("SCAN_MAX_POINTS", "180"))
         self.path_display_stride = max(1, int(os.environ.get("PATH_DISPLAY_STRIDE", "2")))
