@@ -155,6 +155,18 @@ def get_state_snapshot():
         return copy.deepcopy(SHARED_STATE)
 
 
+def get_state_light_snapshot():
+    with LOCK:
+        return {
+            "map_version": SHARED_STATE["map_version"],
+            "map_info": copy.deepcopy(SHARED_STATE["map_info"]),
+            "render_info": copy.deepcopy(SHARED_STATE["render_info"]),
+            "pose": copy.deepcopy(SHARED_STATE["pose"]),
+            "goal": copy.deepcopy(SHARED_STATE["goal"]),
+            "status": copy.deepcopy(SHARED_STATE["status"]),
+        }
+
+
 def update_shared_state(fn):
     with LOCK:
         fn(SHARED_STATE)

@@ -3,6 +3,7 @@
 
 import copy
 import math
+import os
 import threading
 import time
 
@@ -10,6 +11,9 @@ LOCK = threading.Lock()
 
 MAX_TRAJECTORY_SAMPLES = 5000
 MAX_MISSION_HISTORY = 100
+ENABLE_TRAJECTORY_METRICS = os.getenv("ENABLE_TRAJECTORY_METRICS", "0") == "1"
+ENABLE_PATH_DEVIATION_METRICS = os.getenv("ENABLE_PATH_DEVIATION_METRICS", "0") == "1"
+ENABLE_MISSION_POSE_TRACE = os.getenv("ENABLE_MISSION_POSE_TRACE", "0") == "1"
 
 
 def _default_run_meta():
@@ -320,8 +324,9 @@ def record_pose_sample(ts, x, y, theta, ok):
         "ok": bool(ok),
     }
     with LOCK:
-        METRICS["trajectory"].append(sample)
-        _cap_list(METRICS["trajectory"], MAX_TRAJECTORY_SAMPLES)
+        if ENABLE_TRAJECTORY_METRICS:
+            METRICS["trajectory"].append(sample)
+            _cap_list(METRICS["trajectory"], MAX_TRAJECTORY_SAMPLES)
 
         distance = METRICS["distance"]
         if ok:
@@ -344,7 +349,7 @@ def record_pose_sample(ts, x, y, theta, ok):
         current_path = METRICS["current_path"]
         mission = METRICS["current_mission"]
         deviation = None
-        if ok and len(current_path) >= 2:
+        if ENABLE_PATH_DEVIATION_METRICS and ok and len(current_path) >= 2:
             deviation = _distance_to_path(current_path, sample["x"], sample["y"])
             if deviation is not None:
                 stats = METRICS["path_stats"]
@@ -360,12 +365,13 @@ def record_pose_sample(ts, x, y, theta, ok):
                 stats["max_deviation_m"] = deviation if prev_max is None else max(prev_max, deviation)
 
         if mission is not None and ok:
-            if mission["pose_trace"]:
+            if ENABLE_MISSION_POSE_TRACE and mission["pose_trace"]:
                 prev = mission["pose_trace"][-1]
                 mission["path_length_executed_m"] += math.hypot(sample["x"] - prev["x"], sample["y"] - prev["y"])
             mission["samples"] += 1
-            mission["pose_trace"].append(sample)
-            _cap_list(mission["pose_trace"], 500)
+            if ENABLE_MISSION_POSE_TRACE:
+                mission["pose_trace"].append(sample)
+                _cap_list(mission["pose_trace"], 500)
             mission["distance_to_goal_m"] = math.hypot(
                 sample["x"] - mission["goal"]["x"],
                 sample["y"] - mission["goal"]["y"],
@@ -483,6 +489,29 @@ def _build_summary(snapshot):
     }
 
 
+def _build_summary_light(run_started_at, trajectory_count, missions):
+    success_missions = [m for m in missions if m["status"] == "success"]
+    return {
+        "success_rate": (len(success_missions) / len(missions)) if missions else None,
+        "mean_time_to_goal_sec": _mean(m.get("duration_sec") for m in success_missions),
+        "mean_path_deviation_m": _mean(m.get("mean_path_deviation_m") for m in missions),
+        "mean_intervention_count": _mean(m.get("intervention_count") for m in missions),
+        "trajectory_samples": trajectory_count,
+        "mission_count": len(missions),
+        "completed_missions": len(success_missions),
+        "failed_or_aborted_missions": len([m for m in missions if m["status"] in ("failed", "aborted")]),
+        "run_duration_sec": max(0.0, time.time() - run_started_at),
+    }
+
+
+def _strip_pose_trace(mission):
+    if mission is None:
+        return None
+    item = copy.deepcopy(mission)
+    item.pop("pose_trace", None)
+    return item
+
+
 def _field_status_map(snapshot):
     has_ref = bool(snapshot["reference"]["trajectory"])
     has_missions = bool(snapshot["missions"])
@@ -517,6 +546,49 @@ def get_metrics_snapshot(
     include_pose_traces=False,
     include_reference_trajectory=False,
 ):
+    if not include_trajectory and not include_pose_traces and not include_reference_trajectory:
+        with LOCK:
+            run_started_at = METRICS["run_started_at"]
+            run_meta = copy.deepcopy(METRICS["run_meta"])
+            trajectory_count = len(METRICS["trajectory"])
+            missions = [_strip_pose_trace(mission) for mission in METRICS["missions"]]
+            current_mission = _strip_pose_trace(METRICS["current_mission"])
+            planner_stats = copy.deepcopy(METRICS["planner_stats"])
+            qr_stats = copy.deepcopy(METRICS["qr_stats"])
+            reference = {
+                "label": METRICS["reference"].get("label"),
+                "loaded_at": METRICS["reference"].get("loaded_at"),
+                "sample_count": len(METRICS["reference"].get("trajectory") or []),
+            }
+
+        summary = _build_summary_light(run_started_at, trajectory_count, missions)
+        snapshot = {
+            "run_started_at": run_started_at,
+            "run_meta": run_meta,
+            "missions": missions,
+            "current_mission": current_mission,
+            "planner_stats": planner_stats,
+            "summary": summary,
+            "method": run_meta["method"],
+            "route_id": run_meta["route_id"],
+            "trial_id": run_meta["trial_id"],
+            "condition": run_meta["condition"],
+            "weighting_mode": run_meta["weighting_mode"],
+            "reference_metrics": None,
+            "reference": reference,
+            "qr_stats": qr_stats,
+            "payload_mode": {
+                "trajectory": False,
+                "pose_traces": False,
+                "reference_trajectory": False,
+            },
+            "provenance": {
+                "mode": "light",
+                "note": "Light payload avoids trajectory and pose_trace copies on the robot.",
+            },
+        }
+        return snapshot
+
     with LOCK:
         snapshot = copy.deepcopy(METRICS)
 

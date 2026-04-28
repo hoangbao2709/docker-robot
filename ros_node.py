@@ -57,8 +57,13 @@ class LiveMapWeb(Node):
             "/received_global_plan",
         )
         self.base_frame = os.environ.get("BASE_FRAME", "base_link")
-        self.scan_stride = int(os.environ.get("SCAN_STRIDE", "2"))
-        self.scan_max_points = int(os.environ.get("SCAN_MAX_POINTS", "720"))
+        self.enable_scan_points = os.environ.get("ENABLE_SCAN_POINTS", "0") == "1"
+        self.scan_stride = int(os.environ.get("SCAN_STRIDE", "4"))
+        self.scan_max_points = int(os.environ.get("SCAN_MAX_POINTS", "180"))
+        self.path_display_stride = max(1, int(os.environ.get("PATH_DISPLAY_STRIDE", "2")))
+        self.path_display_max_points = max(2, int(os.environ.get("PATH_DISPLAY_MAX_POINTS", "300")))
+        self.fast_timer_sec = float(os.environ.get("FAST_TIMER_SEC", "1.0"))
+        self.slow_timer_sec = float(os.environ.get("SLOW_TIMER_SEC", "5.0"))
         
 #        self.goal_pose_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -155,8 +160,8 @@ class LiveMapWeb(Node):
             f"[slam_live_map] HTTP: http://<IP_RPI>:8080/ | map={self.map_topic} | scan={self.scan_topic} | plan={self.plan_topic} | received_plan={self.received_plan_topic} | base_frame={self.base_frame}"
         )
 
-        self.fast_timer = self.create_timer(0.5, self.fast_tick)
-        self.slow_timer = self.create_timer(2.0, self.slow_tick)
+        self.fast_timer = self.create_timer(self.fast_timer_sec, self.fast_tick)
+        self.slow_timer = self.create_timer(self.slow_timer_sec, self.slow_tick)
     def publish_stop_cmd(self):
         msg = Twist()
 
@@ -165,10 +170,10 @@ class LiveMapWeb(Node):
             self.cmd_vel_nav_pub.publish(msg)
             self.cmd_vel_safe_pub.publish(msg)
     def cb_local_plan(self, msg: Path):
-        points = [
+        points = self.downsample_points([
             {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
             for p in msg.poses
-        ]
+        ])
 
         def _upd(state):
             state["paths"]["local_plan"] = points
@@ -176,11 +181,12 @@ class LiveMapWeb(Node):
 
         update_shared_state(_upd)
     def update_nav_path_display(self, path_xy, source: str, path_key: str = "plan"):
-        points = [{"x": float(x), "y": float(y)} for x, y in (path_xy or [])]
+        full_points = [{"x": float(x), "y": float(y)} for x, y in (path_xy or [])]
+        points = self.downsample_points(full_points)
         path_key = path_key if path_key in ("plan", "received_plan") else "plan"
 
         if path_key == "received_plan" or not self.path_xy:
-            self.path_xy = [(p["x"], p["y"]) for p in points]
+            self.path_xy = [(p["x"], p["y"]) for p in full_points]
 
             if self.path_xy:
                 set_active_path(self.path_xy)
@@ -202,6 +208,25 @@ class LiveMapWeb(Node):
             state["status"]["last_update"] = now_sec()
 
         update_shared_state(_upd)
+
+    def downsample_points(self, points):
+        if not points:
+            return []
+        if len(points) <= self.path_display_max_points and self.path_display_stride <= 1:
+            return points
+
+        sampled = points[:: self.path_display_stride]
+        if sampled[-1] != points[-1]:
+            sampled.append(points[-1])
+
+        if len(sampled) <= self.path_display_max_points:
+            return sampled
+
+        step = max(1, math.ceil(len(sampled) / self.path_display_max_points))
+        capped = sampled[::step]
+        if capped[-1] != sampled[-1]:
+            capped.append(sampled[-1])
+        return capped[: self.path_display_max_points - 1] + [sampled[-1]]
 
     def cb_map(self, msg: OccupancyGrid):
         self.map_msg = msg
@@ -252,6 +277,15 @@ class LiveMapWeb(Node):
 
     def cb_scan(self, msg: LaserScan):
         self.scan_last_stamp_wall = now_sec()
+        if not self.enable_scan_points:
+            def _upd_disabled(state):
+                state["scan"]["points"] = []
+                state["scan"]["stamp"] = now_sec()
+                state["scan"]["frame_id"] = msg.header.frame_id
+                state["scan"]["ok"] = False
+                state["status"]["last_update"] = now_sec()
+            update_shared_state(_upd_disabled)
+            return
 
         try:
             tf = self.tf_buffer.lookup_transform(

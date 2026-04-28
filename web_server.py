@@ -22,6 +22,7 @@ from metrics_store import (
 from shared_state import (
     clear_map_override,
     get_map_override,
+    get_state_light_snapshot,
     get_state_snapshot,
     request_clear_path,
     set_map_override,
@@ -36,6 +37,20 @@ LOADED_MAP_IMAGE_PATH = os.path.join(BASE_DIR, "_loaded_map_preview.png")
 
 def _get_effective_state_snapshot():
     snapshot = get_state_snapshot()
+    override = get_map_override()
+    if override is None:
+        return snapshot
+
+    snapshot["map_version"] = override["map_version"]
+    snapshot["map_info"] = override["map_info"]
+    snapshot["render_info"] = override["render_info"]
+    snapshot["status"]["last_update"] = snapshot["status"].get("last_update", 0.0)
+    snapshot["status"]["planner_msg"] = "loaded saved map bundle"
+    return snapshot
+
+
+def _get_effective_state_light_snapshot():
+    snapshot = get_state_light_snapshot()
     override = get_map_override()
     if override is None:
         return snapshot
@@ -136,6 +151,10 @@ class ImageServer(BaseHTTPRequestHandler):
 
         if path == "/state":
             self._send_json(200, _get_effective_state_snapshot())
+            return
+
+        if path == "/state_light":
+            self._send_json(200, _get_effective_state_light_snapshot())
             return
 
         if path == "/map.png":
