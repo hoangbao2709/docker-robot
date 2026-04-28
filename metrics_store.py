@@ -41,6 +41,14 @@ def _default_metrics():
         "run_started_at": time.time(),
         "run_meta": _default_run_meta(),
         "trajectory": [],
+        "distance": {
+            "total_m": 0.0,
+            "sample_count": 0,
+            "last_pose": None,
+            "last_update": None,
+            "started_at": time.time(),
+            "ignored_jump_count": 0,
+        },
         "current_path": [],
         "path_stats": {
             "sample_count": 0,
@@ -140,6 +148,28 @@ def reset_metrics():
         run_meta = copy.deepcopy(METRICS["run_meta"])
         METRICS = _default_metrics()
         METRICS["run_meta"] = run_meta
+
+
+def reset_distance():
+    with LOCK:
+        METRICS["distance"] = {
+            "total_m": 0.0,
+            "sample_count": 0,
+            "last_pose": None,
+            "last_update": None,
+            "started_at": time.time(),
+            "ignored_jump_count": 0,
+        }
+
+
+def get_distance_snapshot():
+    with LOCK:
+        distance = copy.deepcopy(METRICS["distance"])
+
+    distance["total_cm"] = distance["total_m"] * 100.0
+    distance["total_km"] = distance["total_m"] / 1000.0
+    distance["duration_sec"] = max(0.0, time.time() - distance["started_at"])
+    return distance
 
 
 def update_run_meta(**kwargs):
@@ -292,6 +322,24 @@ def record_pose_sample(ts, x, y, theta, ok):
     with LOCK:
         METRICS["trajectory"].append(sample)
         _cap_list(METRICS["trajectory"], MAX_TRAJECTORY_SAMPLES)
+
+        distance = METRICS["distance"]
+        if ok:
+            last_pose = distance["last_pose"]
+            if last_pose is not None:
+                step = math.hypot(sample["x"] - last_pose["x"], sample["y"] - last_pose["y"])
+                if 0.005 <= step <= 2.0:
+                    distance["total_m"] += step
+                elif step > 2.0:
+                    distance["ignored_jump_count"] += 1
+            distance["sample_count"] += 1
+            distance["last_pose"] = {
+                "t": sample["t"],
+                "x": sample["x"],
+                "y": sample["y"],
+                "theta": sample["theta"],
+            }
+            distance["last_update"] = sample["t"]
 
         current_path = METRICS["current_path"]
         mission = METRICS["current_mission"]

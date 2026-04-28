@@ -12,7 +12,9 @@ from cartographer_manager import get_slam_status
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
 from metrics_store import (
     clear_reference_trajectory,
+    get_distance_snapshot,
     get_metrics_snapshot,
+    reset_distance,
     reset_metrics,
     set_reference_trajectory,
     update_run_meta,
@@ -168,6 +170,10 @@ class ImageServer(BaseHTTPRequestHandler):
                     include_reference_trajectory=include_reference_trajectory,
                 ),
             )
+            return
+
+        if path == "/distance":
+            self._send_json(200, get_distance_snapshot())
             return
 
         if path.startswith("/set_goal_pose"):
@@ -354,6 +360,15 @@ class ImageServer(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "success": True,
                 "message": "metrics reset",
+            })
+            return
+
+        if path == "/distance/reset":
+            reset_distance()
+            self._send_json(200, {
+                "success": True,
+                "message": "distance reset",
+                "distance": get_distance_snapshot(),
             })
             return
 
