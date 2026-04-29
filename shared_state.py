@@ -38,6 +38,16 @@ SHARED_STATE = {
     },
     "scan": {
         "points": [],
+        "raw": {
+            "samples": [],
+            "range_min": 0.0,
+            "range_max": 0.0,
+        },
+        "transform": {
+            "x": 0.0,
+            "y": 0.0,
+            "yaw": 0.0,
+        },
         "stamp": 0.0,
         "frame_id": "",
         "ok": False,
@@ -157,6 +167,7 @@ def get_state_snapshot():
 
 def get_state_light_snapshot():
     with LOCK:
+        scan = SHARED_STATE["scan"]
         return {
             "map_version": SHARED_STATE["map_version"],
             "map_info": copy.deepcopy(SHARED_STATE["map_info"]),
@@ -164,7 +175,14 @@ def get_state_light_snapshot():
             "pose": copy.deepcopy(SHARED_STATE["pose"]),
             "goal": copy.deepcopy(SHARED_STATE["goal"]),
             "paths": copy.deepcopy(SHARED_STATE["paths"]),
-            "scan": copy.deepcopy(SHARED_STATE["scan"]),
+            "scan": {
+                "points": [],
+                "raw": copy.deepcopy(scan.get("raw") or {}),
+                "transform": copy.deepcopy(scan.get("transform") or {}),
+                "stamp": scan.get("stamp", 0.0),
+                "frame_id": scan.get("frame_id", ""),
+                "ok": scan.get("ok", False),
+            },
             "status": copy.deepcopy(SHARED_STATE["status"]),
         }
 

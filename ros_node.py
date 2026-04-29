@@ -48,7 +48,7 @@ class LiveMapWeb(Node):
             "/received_global_plan",
         )
         self.base_frame = os.environ.get("BASE_FRAME", "base_link")
-        self.enable_scan_points = os.environ.get("ENABLE_SCAN_POINTS", "1") == "1"
+        self.enable_scan_points = os.environ.get("ENABLE_SCAN_POINTS", "0") == "1"
         self.scan_stride = int(os.environ.get("SCAN_STRIDE", "4"))
         self.scan_max_points = int(os.environ.get("SCAN_MAX_POINTS", "180"))
         self.path_display_stride = max(1, int(os.environ.get("PATH_DISPLAY_STRIDE", "2")))
@@ -263,15 +263,27 @@ class LiveMapWeb(Node):
 
     def cb_scan(self, msg: LaserScan):
         self.scan_last_stamp_wall = now_sec()
-        if not self.enable_scan_points:
-            def _upd_disabled(state):
-                state["scan"]["points"] = []
-                state["scan"]["stamp"] = now_sec()
-                state["scan"]["frame_id"] = msg.header.frame_id
-                state["scan"]["ok"] = False
-                state["status"]["last_update"] = now_sec()
-            update_shared_state(_upd_disabled)
-            return
+
+        stamp_sec = (
+            float(msg.header.stamp.sec) +
+            float(msg.header.stamp.nanosec) * 1e-9
+        )
+
+        samples = []
+        angle = msg.angle_min
+        stride = max(1, self.scan_stride)
+
+        for i, rng in enumerate(msg.ranges):
+            if i % stride == 0 and math.isfinite(rng):
+                if msg.range_min <= rng <= msg.range_max:
+                    samples.append({
+                        "angle": float(angle),
+                        "range": float(rng),
+                    })
+                    if len(samples) >= self.scan_max_points:
+                        break
+
+            angle += msg.angle_increment
 
         try:
             tf = self.tf_buffer.lookup_transform(
@@ -282,8 +294,16 @@ class LiveMapWeb(Node):
             )
         except Exception:
             def _upd_fail(state):
+                state["scan"]["points"] = []
+                state["scan"]["raw"] = {
+                    "samples": samples,
+                    "range_min": float(msg.range_min),
+                    "range_max": float(msg.range_max),
+                }
                 state["scan"]["ok"] = False
-                state["scan"]["stamp"] = now_sec()
+                state["scan"]["stamp"] = stamp_sec
+                state["scan"]["frame_id"] = msg.header.frame_id
+                state["status"]["last_update"] = now_sec()
             update_shared_state(_upd_fail)
             return
 
@@ -291,45 +311,31 @@ class LiveMapWeb(Node):
         ty = tf.transform.translation.y
         yaw = quat_to_yaw(tf.transform.rotation)
 
-        cy = math.cos(yaw)
-        sy = math.sin(yaw)
-
         points = []
-        angle = msg.angle_min
-        stride = max(1, self.scan_stride)
-
-        for i, rng in enumerate(msg.ranges):
-            if i % stride != 0:
-                angle += msg.angle_increment
-                continue
-
-            if not math.isfinite(rng):
-                angle += msg.angle_increment
-                continue
-            if rng < msg.range_min or rng > msg.range_max:
-                angle += msg.angle_increment
-                continue
-
-            lx = rng * math.cos(angle)
-            ly = rng * math.sin(angle)
-
-            wx = tx + cy * lx - sy * ly
-            wy = ty + sy * lx + cy * ly
-
-            points.append({"x": float(wx), "y": float(wy)})
-
-            if len(points) >= self.scan_max_points:
-                break
-
-            angle += msg.angle_increment
-
-        stamp_sec = (
-            float(msg.header.stamp.sec) +
-            float(msg.header.stamp.nanosec) * 1e-9
-        )
+        if self.enable_scan_points:
+            cy = math.cos(yaw)
+            sy = math.sin(yaw)
+            for sample in samples:
+                rng = sample["range"]
+                angle = sample["angle"]
+                lx = rng * math.cos(angle)
+                ly = rng * math.sin(angle)
+                wx = tx + cy * lx - sy * ly
+                wy = ty + sy * lx + cy * ly
+                points.append({"x": float(wx), "y": float(wy)})
 
         def _upd(state):
             state["scan"]["points"] = points
+            state["scan"]["raw"] = {
+                "samples": samples,
+                "range_min": float(msg.range_min),
+                "range_max": float(msg.range_max),
+            }
+            state["scan"]["transform"] = {
+                "x": float(tx),
+                "y": float(ty),
+                "yaw": float(yaw),
+            }
             state["scan"]["stamp"] = stamp_sec
             state["scan"]["frame_id"] = msg.header.frame_id
             state["scan"]["ok"] = True
