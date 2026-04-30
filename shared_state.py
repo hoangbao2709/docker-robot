@@ -12,6 +12,7 @@ INITIAL_POSE_REQUEST = None
 CLEAR_REQUEST = False
 SAVE_REQUEST_NAME = None
 MAP_OVERRIDE = None
+RAW_MAP = None
 
 SHARED_STATE = {
     "map_version": 0,
@@ -158,6 +159,43 @@ def clear_map_override():
     global MAP_OVERRIDE
     with LOCK:
         MAP_OVERRIDE = None
+
+
+def set_raw_map_snapshot(
+    *,
+    width,
+    height,
+    resolution,
+    origin_x,
+    origin_y,
+    frame_id,
+    data,
+    map_version,
+):
+    global RAW_MAP
+    with LOCK:
+        RAW_MAP = {
+            "width": int(width),
+            "height": int(height),
+            "resolution": float(resolution),
+            "origin_x": float(origin_x),
+            "origin_y": float(origin_y),
+            "frame_id": str(frame_id or "map"),
+            "data": bytes(data),
+            "map_version": int(map_version),
+            "stamp": time.time(),
+            "dtype": "int8",
+            "encoding": "occupancy-grid-int8-row-major",
+        }
+
+
+def get_raw_map_snapshot():
+    with LOCK:
+        if RAW_MAP is None:
+            return None
+        snapshot = dict(RAW_MAP)
+        snapshot["data"] = bytes(RAW_MAP["data"])
+        return snapshot
 
 
 def get_state_snapshot():

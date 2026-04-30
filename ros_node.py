@@ -26,6 +26,7 @@ from tf2_ros import Buffer, TransformListener
 
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
 from shared_state import (
+    set_raw_map_snapshot,
     get_state_snapshot,
     pop_clear_request,
     pop_goal_request,
@@ -55,6 +56,7 @@ class LiveMapWeb(Node):
         self.path_display_max_points = max(2, int(os.environ.get("PATH_DISPLAY_MAX_POINTS", "300")))
         self.fast_timer_sec = float(os.environ.get("FAST_TIMER_SEC", "1.0"))
         self.slow_timer_sec = float(os.environ.get("SLOW_TIMER_SEC", "5.0"))
+        self.render_map_png = os.environ.get("RENDER_MAP_PNG", "0") == "1"
         
 #        self.goal_pose_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -223,12 +225,8 @@ class LiveMapWeb(Node):
         w = msg.info.width
         data = np.array(msg.data, dtype=np.int16).reshape(h, w)
 
-        occ_mask = data > 50
-        free_mask = data == 0
-
-        grid = np.zeros((h, w), dtype=np.uint8)
-        grid[occ_mask] = 1
-        self.grid = grid
+        occ_count = int(np.count_nonzero(data > 50))
+        free_count = int(np.count_nonzero(data == 0))
 
         try:
             fp = (
@@ -237,24 +235,60 @@ class LiveMapWeb(Node):
                 float(msg.info.resolution),
                 float(msg.info.origin.position.x),
                 float(msg.info.origin.position.y),
-                int(np.count_nonzero(occ_mask)),
-                int(np.count_nonzero(free_mask)),
+                occ_count,
+                free_count,
             )
         except Exception:
             fp = (int(w), int(h), now_sec())
 
-        if fp != self.last_map_fingerprint:
+        map_changed = fp != self.last_map_fingerprint
+        if map_changed:
             self.last_map_fingerprint = fp
             self.map_dirty = True
 
+        side = max(int(w), int(h))
+        extra = max(4, int(0.03 * side))
+        side2 = side + 2 * extra
+        pad_left = (side2 - int(w)) // 2
+        pad_bottom = (side2 - int(h)) // 2
+        res = float(msg.info.resolution)
+        render_origin_x = float(msg.info.origin.position.x) - pad_left * res
+        render_origin_y = float(msg.info.origin.position.y) - pad_bottom * res
+
+        next_map_version = None
+        if map_changed:
+            snapshot = get_state_snapshot()
+            next_map_version = int(snapshot.get("map_version") or 0) + 1
+            set_raw_map_snapshot(
+                width=int(w),
+                height=int(h),
+                resolution=res,
+                origin_x=float(msg.info.origin.position.x),
+                origin_y=float(msg.info.origin.position.y),
+                frame_id=self.map_frame,
+                data=data.astype(np.int8, copy=False).tobytes(),
+                map_version=next_map_version,
+            )
+
         def _upd(state):
+            if map_changed and next_map_version is not None:
+                state["map_version"] = next_map_version
             state["map_info"] = {
                 "width": int(w),
                 "height": int(h),
-                "resolution": float(msg.info.resolution),
+                "resolution": res,
                 "origin_x": float(msg.info.origin.position.x),
                 "origin_y": float(msg.info.origin.position.y),
                 "frame_id": self.map_frame,
+            }
+            state["render_info"] = {
+                "width_cells": int(side2),
+                "height_cells": int(side2),
+                "resolution": res,
+                "origin_x": float(render_origin_x),
+                "origin_y": float(render_origin_y),
+                "pad_left_cells": int(pad_left),
+                "pad_bottom_cells": int(pad_bottom),
             }
             state["status"]["slam_ok"] = True
             state["status"]["last_update"] = now_sec()
@@ -686,7 +720,8 @@ class LiveMapWeb(Node):
             return
 
         try:
-            self.render_map_png_if_needed()
+            if self.render_map_png:
+                self.render_map_png_if_needed()
             self.save_map_files(name, self.map_msg)
             self.get_logger().info(f"SAVE_MAP: saved map '{name}' into {MAP_SAVE_DIR}")
         except Exception as e:
@@ -825,7 +860,6 @@ class LiveMapWeb(Node):
         self.map_dirty = False
 
         def _upd(state):
-            state["map_version"] += 1
             state["render_info"] = {
                 "width_cells": int(side2),
                 "height_cells": int(side2),
@@ -898,4 +932,5 @@ class LiveMapWeb(Node):
         self.update_pose_and_status()
 
     def slow_tick(self):
-        self.render_map_png_if_needed()
+        if self.render_map_png:
+            self.render_map_png_if_needed()

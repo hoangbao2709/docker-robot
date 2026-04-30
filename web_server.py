@@ -22,6 +22,7 @@ from metrics_store import (
 from shared_state import (
     clear_map_override,
     get_map_override,
+    get_raw_map_snapshot,
     get_state_light_snapshot,
     get_state_snapshot,
     request_clear_path,
@@ -55,6 +56,7 @@ def _api_root_payload():
             "state": "/state",
             "state_light": "/state_light",
             "map": "/map.png",
+            "map_raw": "/map_raw",
             "set_goal": "/set_goal_pose?x=<x>&y=<y>&yaw=<yaw>",
             "set_initial_pose": "/set_initial_pose?x=<x>&y=<y>&yaw=<yaw>",
             "clear_path": "/clear_path",
@@ -214,6 +216,40 @@ class ImageServer(BaseHTTPRequestHandler):
                 )
             except Exception:
                 self.send_error(404, "map.png not found")
+            return
+
+        if path == "/map_raw":
+            if get_map_override() is not None:
+                self._send_json(409, {
+                    "success": False,
+                    "reason": "map_override_active",
+                    "message": "Loaded map preview is image-only; use /map.png for this map.",
+                })
+                return
+
+            raw_map = get_raw_map_snapshot()
+            if raw_map is None:
+                self.send_error(404, "raw map not available")
+                return
+
+            self._send_bytes(
+                200,
+                "application/octet-stream",
+                raw_map["data"],
+                extra_headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                    "X-Map-Version": str(raw_map["map_version"]),
+                    "X-Map-Width": str(raw_map["width"]),
+                    "X-Map-Height": str(raw_map["height"]),
+                    "X-Map-Resolution": str(raw_map["resolution"]),
+                    "X-Map-Origin-X": str(raw_map["origin_x"]),
+                    "X-Map-Origin-Y": str(raw_map["origin_y"]),
+                    "X-Map-Frame-Id": raw_map["frame_id"],
+                    "X-Map-Dtype": raw_map["dtype"],
+                    "X-Map-Encoding": raw_map["encoding"],
+                    "X-Map-Stamp": str(raw_map["stamp"]),
+                },
+            )
             return
 
         if path == "/slam_status":
