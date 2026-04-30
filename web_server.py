@@ -30,9 +30,40 @@ from shared_state import (
     set_initial_pose_request,
     set_save_request,
 )
-from templates import build_index_html
 
 LOADED_MAP_IMAGE_PATH = os.path.join(BASE_DIR, "_loaded_map_preview.png")
+WEB_UI_URL = (
+    os.environ.get("WEB_UI_URL")
+    or os.environ.get("FRONTEND_UI_URL")
+    or ""
+).strip()
+
+
+def _api_root_payload():
+    return {
+        "service": "dogzilla-slam-api",
+        "mode": "api-only",
+        "ui": {
+            "served_by_robot": False,
+            "frontend_url": WEB_UI_URL or None,
+            "message": (
+                "Robot-side map UI is disabled. Use the web frontend "
+                "(/autonomous or /robot-map) for rendering and interaction."
+            ),
+        },
+        "endpoints": {
+            "state": "/state",
+            "state_light": "/state_light",
+            "map": "/map.png",
+            "set_goal": "/set_goal_pose?x=<x>&y=<y>&yaw=<yaw>",
+            "set_initial_pose": "/set_initial_pose?x=<x>&y=<y>&yaw=<yaw>",
+            "clear_path": "/clear_path",
+            "points": "/points",
+            "save_map": "/save_map?name=<name>",
+            "upload_map": "/upload_map",
+            "use_live_map": "/use_live_map",
+        },
+    }
 
 
 def _get_effective_state_snapshot():
@@ -126,8 +157,11 @@ class ImageServer(BaseHTTPRequestHandler):
             json.dumps(obj, ensure_ascii=False).encode("utf-8"),
         )
 
-    def _send_html(self, html):
-        self._send_bytes(200, "text/html; charset=utf-8", html.encode("utf-8"))
+    def _redirect(self, target_url: str):
+        self.send_response(302)
+        self.send_header("Location", target_url)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
 
     def _read_json_body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -146,7 +180,18 @@ class ImageServer(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/" or path == "/index.html":
-            self._send_html(build_index_html())
+            if WEB_UI_URL:
+                self._redirect(WEB_UI_URL)
+                return
+            self._send_json(200, _api_root_payload())
+            return
+
+        if path == "/health":
+            self._send_json(200, {
+                "ok": True,
+                "service": "dogzilla-slam-api",
+                "mode": "api-only",
+            })
             return
 
         if path == "/state":
