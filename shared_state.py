@@ -13,6 +13,23 @@ CLEAR_REQUEST = False
 SAVE_REQUEST_NAME = None
 MAP_OVERRIDE = None
 
+
+def _default_point_navigation():
+    return {
+        "active": False,
+        "name": None,
+        "status": "idle",
+        "success": False,
+        "message": "",
+        "offset_m": 0.0,
+        "requested_point": None,
+        "goal": None,
+        "distance_to_goal_m": None,
+        "distance_to_point_m": None,
+        "started_at": None,
+        "finished_at": None,
+    }
+
 SHARED_STATE = {
     "map_version": 0,
     "map_info": None,
@@ -42,6 +59,7 @@ SHARED_STATE = {
         "frame_id": "",
         "ok": False,
     },
+    "point_navigation": _default_point_navigation(),
     "status": {
         "slam_ok": False,
         "tf_ok": False,
@@ -54,7 +72,7 @@ SHARED_STATE = {
 }
 
 
-def set_goal_request(x, y, yaw, u=None, v=None):
+def set_goal_request(x, y, yaw, u=None, v=None, metadata=None):
     global GOAL_REQUEST
     with LOCK:
         GOAL_REQUEST = {
@@ -66,6 +84,8 @@ def set_goal_request(x, y, yaw, u=None, v=None):
             GOAL_REQUEST["u"] = float(u)
         if v is not None:
             GOAL_REQUEST["v"] = float(v)
+        if metadata is not None:
+            GOAL_REQUEST["metadata"] = copy.deepcopy(metadata)
 
 
 def pop_goal_request():
@@ -163,6 +183,7 @@ def get_state_light_snapshot():
             "render_info": copy.deepcopy(SHARED_STATE["render_info"]),
             "pose": copy.deepcopy(SHARED_STATE["pose"]),
             "goal": copy.deepcopy(SHARED_STATE["goal"]),
+            "point_navigation": copy.deepcopy(SHARED_STATE["point_navigation"]),
             "status": copy.deepcopy(SHARED_STATE["status"]),
         }
 

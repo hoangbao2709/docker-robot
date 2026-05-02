@@ -3,6 +3,7 @@
 
 import cgi
 import json
+import math
 import os
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -33,6 +34,7 @@ from shared_state import (
 from templates import build_index_html
 
 LOADED_MAP_IMAGE_PATH = os.path.join(BASE_DIR, "_loaded_map_preview.png")
+GO_TO_POINT_OFFSET_M = float(os.environ.get("GO_TO_POINT_OFFSET_M", "0.35"))
 
 
 def _get_effective_state_snapshot():
@@ -97,6 +99,60 @@ def _activate_map_bundle(bundle_path: str):
         "map_info": map_info,
         "render_info": render_info,
         "image_path": LOADED_MAP_IMAGE_PATH,
+    }
+
+
+def _build_offset_goal_for_point(name: str, point: dict):
+    point_x = float(point["x"])
+    point_y = float(point["y"])
+    point_yaw = float(point.get("yaw", 0.0))
+    offset_m = max(0.0, GO_TO_POINT_OFFSET_M)
+
+    snapshot = get_state_snapshot()
+    pose = snapshot.get("pose") or {}
+
+    source = "point_yaw_fallback"
+    if pose.get("ok"):
+        dx = float(pose.get("x", 0.0)) - point_x
+        dy = float(pose.get("y", 0.0)) - point_y
+        dist = math.hypot(dx, dy)
+        if dist > 1e-6:
+            ux = dx / dist
+            uy = dy / dist
+            source = "current_pose"
+        else:
+            ux = -math.cos(point_yaw)
+            uy = -math.sin(point_yaw)
+    else:
+        ux = -math.cos(point_yaw)
+        uy = -math.sin(point_yaw)
+
+    goal_x = point_x + ux * offset_m
+    goal_y = point_y + uy * offset_m
+    goal_yaw = math.atan2(point_y - goal_y, point_x - goal_x)
+
+    return {
+        "goal": {
+            "x": goal_x,
+            "y": goal_y,
+            "yaw": goal_yaw,
+        },
+        "metadata": {
+            "type": "go_to_point",
+            "point_name": name,
+            "offset_m": offset_m,
+            "offset_source": source,
+            "requested_point": {
+                "x": point_x,
+                "y": point_y,
+                "yaw": point_yaw,
+            },
+            "approach_goal": {
+                "x": goal_x,
+                "y": goal_y,
+                "yaw": goal_yaw,
+            },
+        },
     }
 
 
@@ -233,6 +289,11 @@ class ImageServer(BaseHTTPRequestHandler):
             return
         if path == "/points":
             self._send_json(200, load_points())
+            return
+
+        if path == "/go_to_point_status":
+            snapshot = _get_effective_state_snapshot()
+            self._send_json(200, snapshot.get("point_navigation") or {})
             return
 
         if path.startswith("/points/"):
@@ -453,22 +514,30 @@ class ImageServer(BaseHTTPRequestHandler):
                 if point is None:
                     self.send_error(404, "point not found")
                     return
+                offset_goal = _build_offset_goal_for_point(name, point)
+                goal = offset_goal["goal"]
 
                 set_goal_request(
-                    point["x"],
-                    point["y"],
-                    point.get("yaw", 0.0),
+                    goal["x"],
+                    goal["y"],
+                    goal["yaw"],
+                    metadata=offset_goal["metadata"],
                 )
 
                 self._send_json(200, {
                     "success": True,
+                    "navigation_success": False,
+                    "status": "sent",
                     "message": f"goal '{name}' sent",
                     "goal": {
                         "name": name,
-                        "x": point["x"],
-                        "y": point["y"],
-                        "yaw": point.get("yaw", 0.0),
-                    }
+                        "x": goal["x"],
+                        "y": goal["y"],
+                        "yaw": goal["yaw"],
+                    },
+                    "requested_point": offset_goal["metadata"]["requested_point"],
+                    "offset_m": offset_goal["metadata"]["offset_m"],
+                    "point_navigation": offset_goal["metadata"],
                 })
             except Exception as e:
                 self.send_error(400, f"bad request: {e}")

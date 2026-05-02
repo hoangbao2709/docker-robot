@@ -64,6 +64,7 @@ class LiveMapWeb(Node):
         self.path_display_max_points = max(2, int(os.environ.get("PATH_DISPLAY_MAX_POINTS", "300")))
         self.fast_timer_sec = float(os.environ.get("FAST_TIMER_SEC", "1.0"))
         self.slow_timer_sec = float(os.environ.get("SLOW_TIMER_SEC", "5.0"))
+        self.goal_success_tolerance_m = float(os.environ.get("GOAL_SUCCESS_TOLERANCE_M", "0.45"))
         
 #        self.goal_pose_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -517,12 +518,22 @@ class LiveMapWeb(Node):
             self._nav_goal_handle = None
             self.get_logger().error(f"Nav2 goal send failed: {e}")
             finalize_current_mission(status="failed", result=f"goal send failed: {e}")
+            self.update_point_navigation_result(
+                nav_succeeded=False,
+                message=f"goal send failed: {e}",
+                pose=get_state_snapshot().get("pose") or {},
+            )
             return
 
         if not goal_handle.accepted:
             self._nav_goal_handle = None
             self.get_logger().warn("Nav2 goal was rejected")
             finalize_current_mission(status="failed", result="nav2 goal rejected")
+            self.update_point_navigation_result(
+                nav_succeeded=False,
+                message="nav2 goal rejected",
+                pose=get_state_snapshot().get("pose") or {},
+            )
 
             def _upd(state):
                 state["status"]["planner_ok"] = False
@@ -541,7 +552,9 @@ class LiveMapWeb(Node):
     def _nav_result_callback(self, future):
         self._nav_goal_handle = None
         try:
-            result = future.result().result
+            wrapped_result = future.result()
+            result = wrapped_result.result
+            nav_status = getattr(wrapped_result, "status", None)
             self.get_logger().info(f"Nav2 goal finished: {result}")
             snapshot = get_state_snapshot()
             pose = snapshot.get("pose") or {}
@@ -555,6 +568,11 @@ class LiveMapWeb(Node):
                 status="completed",
                 result=str(result),
                 pose=pose_sample,
+            )
+            self.update_point_navigation_result(
+                nav_succeeded=(nav_status is None or int(nav_status) == 4),
+                message="nav2 goal finished",
+                pose=pose,
             )
 
             def _upd(state):
@@ -577,6 +595,11 @@ class LiveMapWeb(Node):
                 status="failed",
                 result=f"nav2 result error: {e}",
                 pose=pose_sample,
+            )
+            self.update_point_navigation_result(
+                nav_succeeded=False,
+                message=f"nav2 result error: {e}",
+                pose=pose,
             )
 
             def _upd(state):
@@ -645,6 +668,48 @@ class LiveMapWeb(Node):
 
             update_shared_state(_upd_fail)
 
+    def update_point_navigation_result(self, nav_succeeded: bool, message: str, pose: dict):
+        snapshot = get_state_snapshot()
+        point_nav = snapshot.get("point_navigation") or {}
+        if not point_nav.get("active"):
+            return
+
+        goal = point_nav.get("goal") or {}
+        requested_point = point_nav.get("requested_point") or {}
+        distance_to_goal = None
+        distance_to_point = None
+        reached = False
+
+        if pose.get("ok"):
+            px = float(pose.get("x", 0.0))
+            py = float(pose.get("y", 0.0))
+            if goal:
+                distance_to_goal = math.hypot(px - float(goal["x"]), py - float(goal["y"]))
+                reached = distance_to_goal <= self.goal_success_tolerance_m
+            if requested_point:
+                distance_to_point = math.hypot(
+                    px - float(requested_point["x"]),
+                    py - float(requested_point["y"]),
+                )
+
+        success = bool(nav_succeeded and reached)
+
+        def _upd(state):
+            nav = state["point_navigation"]
+            nav["active"] = False
+            nav["status"] = "success" if success else "failed"
+            nav["success"] = success
+            nav["message"] = message if success else f"{message}; goal not reached within tolerance"
+            nav["distance_to_goal_m"] = distance_to_goal
+            nav["distance_to_point_m"] = distance_to_point
+            nav["finished_at"] = now_sec()
+            state["status"]["go_to_point_success"] = success
+            state["status"]["go_to_point_status"] = nav["status"]
+            state["status"]["go_to_point_message"] = nav["message"]
+            state["status"]["last_update"] = now_sec()
+
+        update_shared_state(_upd)
+
     def process_goal_request_if_any(self):
         req = pop_goal_request()
         if req is None:
@@ -653,6 +718,7 @@ class LiveMapWeb(Node):
         goal_yaw = req["yaw"]
         requested_gx = float(req["x"])
         requested_gy = float(req["y"])
+        metadata = req.get("metadata") or {}
 
         def _upd_goal_requested(state):
             state["goal"]["x"] = float(requested_gx)
@@ -664,6 +730,27 @@ class LiveMapWeb(Node):
             state["status"]["planner_ok"] = False
             state["status"]["planner_msg"] = "sending nav2 goal..."
             state["status"]["last_update"] = now_sec()
+            if metadata.get("type") == "go_to_point":
+                state["point_navigation"] = {
+                    "active": True,
+                    "name": metadata.get("point_name"),
+                    "status": "running",
+                    "success": False,
+                    "message": "nav2 goal sent",
+                    "offset_m": float(metadata.get("offset_m", 0.0)),
+                    "offset_source": metadata.get("offset_source"),
+                    "requested_point": metadata.get("requested_point"),
+                    "goal": metadata.get(
+                        "approach_goal",
+                        {"x": float(requested_gx), "y": float(requested_gy), "yaw": float(goal_yaw)},
+                    ),
+                    "distance_to_goal_m": None,
+                    "distance_to_point_m": None,
+                    "started_at": now_sec(),
+                    "finished_at": None,
+                }
+                state["status"]["go_to_point_success"] = False
+                state["status"]["go_to_point_status"] = "running"
 
         update_shared_state(_upd_goal_requested)
 
@@ -686,6 +773,11 @@ class LiveMapWeb(Node):
             self.request_nav2_plan(requested_gx, requested_gy, goal_yaw)
         else:
             clear_active_path()
+            self.update_point_navigation_result(
+                nav_succeeded=False,
+                message="nav2 action server unavailable",
+                pose=get_state_snapshot().get("pose") or {},
+            )
 
             def _upd_fail(state):
                 state["status"]["planner_ok"] = False
@@ -725,6 +817,14 @@ class LiveMapWeb(Node):
 
             state["status"]["planner_ok"] = False
             state["status"]["planner_msg"] = "stopped and cleared"
+            if state["point_navigation"].get("active"):
+                state["point_navigation"]["active"] = False
+                state["point_navigation"]["status"] = "aborted"
+                state["point_navigation"]["success"] = False
+                state["point_navigation"]["message"] = "clear path requested"
+                state["point_navigation"]["finished_at"] = now_sec()
+            state["status"]["go_to_point_success"] = False
+            state["status"]["go_to_point_status"] = "aborted"
             state["status"]["last_update"] = now_sec()
 
         update_shared_state(_upd)
