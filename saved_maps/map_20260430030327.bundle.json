@@ -1,0 +1,26 @@
+{
+  "format": "slam-live-map-bundle-v1",
+  "base_name": "map_20260430030327",
+  "map_info": {
+    "width": 117,
+    "height": 138,
+    "resolution": 0.05000000074505806,
+    "origin_x": -1.877315139770508,
+    "origin_y": -1.8447032928466798,
+    "frame_id": "map"
+  },
+  "render_info": {
+    "width_cells": 146,
+    "height_cells": 146,
+    "resolution": 0.05000000074505806,
+    "origin_x": -2.5773151502013207,
+    "origin_y": -2.044703295826912,
+    "pad_left_cells": 14,
+    "pad_bottom_cells": 4
+  },
+  "files": {
+    "preview": "preview.png",
+    "occupancy": "map_20260430030327.pgm",
+    "metadata_yaml": "map_20260430030327.yaml"
+  }
+}
