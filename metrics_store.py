@@ -16,34 +16,9 @@ ENABLE_PATH_DEVIATION_METRICS = os.getenv("ENABLE_PATH_DEVIATION_METRICS", "0") 
 ENABLE_MISSION_POSE_TRACE = os.getenv("ENABLE_MISSION_POSE_TRACE", "0") == "1"
 
 
-def _default_run_meta():
-    return {
-        "method": None,
-        "route_id": None,
-        "trial_id": None,
-        "condition": None,
-        "weighting_mode": None,
-    }
-
-
-def _default_qr_stats():
-    return {
-        "detection_count": None,
-        "accept_count": None,
-        "reject_count": None,
-        "false_correction_count": None,
-        "mean_distance_m": None,
-        "mean_view_angle_deg": None,
-        "occlusion_ratio": None,
-        "blur_score": None,
-        "mean_covariance_trace": None,
-    }
-
-
 def _default_metrics():
     return {
         "run_started_at": time.time(),
-        "run_meta": _default_run_meta(),
         "trajectory": [],
         "distance": {
             "total_m": 0.0,
@@ -74,12 +49,6 @@ def _default_metrics():
         },
         "missions": [],
         "current_mission": None,
-        "reference": {
-            "label": None,
-            "trajectory": [],
-            "loaded_at": None,
-        },
-        "qr_stats": _default_qr_stats(),
     }
 
 
@@ -149,9 +118,7 @@ def _normalize_status(status):
 def reset_metrics():
     global METRICS
     with LOCK:
-        run_meta = copy.deepcopy(METRICS["run_meta"])
         METRICS = _default_metrics()
-        METRICS["run_meta"] = run_meta
 
 
 def reset_distance():
@@ -174,14 +141,6 @@ def get_distance_snapshot():
     distance["total_km"] = distance["total_m"] / 1000.0
     distance["duration_sec"] = max(0.0, time.time() - distance["started_at"])
     return distance
-
-
-def update_run_meta(**kwargs):
-    with LOCK:
-        for key in ("method", "route_id", "trial_id", "condition", "weighting_mode"):
-            if key in kwargs:
-                value = kwargs[key]
-                METRICS["run_meta"][key] = None if value is None else str(value)
 
 
 def set_active_path(path_xy):
@@ -227,11 +186,6 @@ def start_mission(goal, planned_path=None):
     started_at = time.time()
     mission = {
         "mission_id": f"m{int(started_at * 1000)}",
-        "method": METRICS["run_meta"]["method"],
-        "route_id": METRICS["run_meta"]["route_id"],
-        "trial_id": METRICS["run_meta"]["trial_id"],
-        "condition": METRICS["run_meta"]["condition"],
-        "weighting_mode": METRICS["run_meta"]["weighting_mode"],
         "start_time": started_at,
         "end_time": None,
         "duration_sec": None,
@@ -387,92 +341,6 @@ def record_pose_sample(ts, x, y, theta, ok):
                 mission["max_path_deviation_m"] = deviation if prev_max is None else max(prev_max, deviation)
 
 
-def set_reference_trajectory(samples, label=None):
-    normalized = []
-    for item in samples:
-        normalized.append({
-            "t": float(item["t"]),
-            "x": float(item["x"]),
-            "y": float(item["y"]),
-            "theta": float(item.get("theta", 0.0)),
-        })
-    normalized.sort(key=lambda item: item["t"])
-    with LOCK:
-        METRICS["reference"] = {
-            "label": label or "reference",
-            "trajectory": normalized,
-            "loaded_at": time.time(),
-        }
-
-
-def clear_reference_trajectory():
-    with LOCK:
-        METRICS["reference"] = {
-            "label": None,
-            "trajectory": [],
-            "loaded_at": None,
-        }
-
-
-def _nearest_reference_sample(ref_samples, ts):
-    if not ref_samples:
-        return None
-    best = ref_samples[0]
-    best_dt = abs(best["t"] - ts)
-    for item in ref_samples[1:]:
-        dt = abs(item["t"] - ts)
-        if dt < best_dt:
-            best = item
-            best_dt = dt
-    return best
-
-
-def _rad_to_deg(value):
-    return None if value is None else math.degrees(value)
-
-
-def _angle_diff_rad(a, b):
-    diff = a - b
-    while diff > math.pi:
-        diff -= 2.0 * math.pi
-    while diff < -math.pi:
-        diff += 2.0 * math.pi
-    return abs(diff)
-
-
-def _compute_reference_metrics(trajectory, ref_samples):
-    if not trajectory or not ref_samples:
-        return None
-
-    pos_errors = []
-    heading_errors = []
-    for sample in trajectory:
-        if not sample["ok"]:
-            continue
-        ref = _nearest_reference_sample(ref_samples, sample["t"])
-        if ref is None:
-            continue
-        pos_errors.append(math.hypot(sample["x"] - ref["x"], sample["y"] - ref["y"]))
-        heading_errors.append(_angle_diff_rad(sample["theta"], ref["theta"]))
-
-    if not pos_errors:
-        return None
-
-    rmse = math.sqrt(sum(err * err for err in pos_errors) / len(pos_errors))
-    mae = sum(pos_errors) / len(pos_errors)
-    final_drift = pos_errors[-1]
-    mean_heading = sum(heading_errors) / len(heading_errors) if heading_errors else None
-    final_heading = heading_errors[-1] if heading_errors else None
-    return {
-        "position_rmse_m": rmse,
-        "position_mae_m": mae,
-        "final_drift_m": final_drift,
-        "heading_error_mean_deg": _rad_to_deg(mean_heading),
-        "heading_error_final_deg": _rad_to_deg(final_heading),
-        "sample_count": len(pos_errors),
-    }
-
-
 def _build_summary(snapshot):
     missions = snapshot["missions"]
     success_missions = [m for m in missions if m["status"] == "success"]
@@ -512,125 +380,33 @@ def _strip_pose_trace(mission):
     return item
 
 
-def _field_status_map(snapshot):
-    has_ref = bool(snapshot["reference"]["trajectory"])
-    has_missions = bool(snapshot["missions"])
-    return {
-        "method": "real" if snapshot["run_meta"]["method"] is not None else "unsupported",
-        "route_id": "real" if snapshot["run_meta"]["route_id"] is not None else "unsupported",
-        "trial_id": "real" if snapshot["run_meta"]["trial_id"] is not None else "unsupported",
-        "condition": "real" if snapshot["run_meta"]["condition"] is not None else "unsupported",
-        "weighting_mode": "real" if snapshot["run_meta"]["weighting_mode"] is not None else "unsupported",
-        "reference.trajectory": "real" if has_ref else "unsupported",
-        "reference_metrics": "derived" if snapshot["reference_metrics"] is not None else "unsupported",
-        "qr_stats": "unsupported",
-        "missions.duration_sec": "real" if has_missions else "unsupported",
-        "missions.intervention_count": "real" if has_missions else "unsupported",
-        "missions.mean_path_deviation_m": "derived" if has_missions else "unsupported",
-        "missions.max_path_deviation_m": "derived" if has_missions else "unsupported",
-        "missions.final_goal_error_m": "derived" if has_missions else "unsupported",
-        "missions.path_length_planned_m": "derived" if has_missions else "unsupported",
-        "missions.path_length_executed_m": "derived" if has_missions else "unsupported",
-        "missions.goal_reached": "derived" if has_missions else "unsupported",
-        "missions.semantic_goal_verified": "unsupported",
-        "planner_stats.replan_count": "real",
-        "summary.success_rate": "derived",
-        "summary.mean_time_to_goal_sec": "derived",
-        "summary.mean_path_deviation_m": "derived",
-        "summary.mean_intervention_count": "derived",
-    }
-
-
 def get_metrics_snapshot(
     include_trajectory=False,
-    include_pose_traces=False,
-    include_reference_trajectory=False,
 ):
-    if not include_trajectory and not include_pose_traces and not include_reference_trajectory:
+    if not include_trajectory:
         with LOCK:
             run_started_at = METRICS["run_started_at"]
-            run_meta = copy.deepcopy(METRICS["run_meta"])
             trajectory_count = len(METRICS["trajectory"])
             missions = [_strip_pose_trace(mission) for mission in METRICS["missions"]]
             current_mission = _strip_pose_trace(METRICS["current_mission"])
             planner_stats = copy.deepcopy(METRICS["planner_stats"])
-            qr_stats = copy.deepcopy(METRICS["qr_stats"])
-            reference = {
-                "label": METRICS["reference"].get("label"),
-                "loaded_at": METRICS["reference"].get("loaded_at"),
-                "sample_count": len(METRICS["reference"].get("trajectory") or []),
-            }
 
         summary = _build_summary_light(run_started_at, trajectory_count, missions)
         snapshot = {
             "run_started_at": run_started_at,
-            "run_meta": run_meta,
             "missions": missions,
             "current_mission": current_mission,
             "planner_stats": planner_stats,
             "summary": summary,
-            "method": run_meta["method"],
-            "route_id": run_meta["route_id"],
-            "trial_id": run_meta["trial_id"],
-            "condition": run_meta["condition"],
-            "weighting_mode": run_meta["weighting_mode"],
-            "reference_metrics": None,
-            "reference": reference,
-            "qr_stats": qr_stats,
-            "payload_mode": {
-                "trajectory": False,
-                "pose_traces": False,
-                "reference_trajectory": False,
-            },
-            "provenance": {
-                "mode": "light",
-                "note": "Light payload avoids trajectory and pose_trace copies on the robot.",
-            },
         }
         return snapshot
 
     with LOCK:
         snapshot = copy.deepcopy(METRICS)
 
-    snapshot["reference_metrics"] = _compute_reference_metrics(
-        snapshot["trajectory"],
-        snapshot["reference"]["trajectory"],
-    )
     snapshot["summary"] = _build_summary(snapshot)
-    snapshot["method"] = snapshot["run_meta"]["method"]
-    snapshot["route_id"] = snapshot["run_meta"]["route_id"]
-    snapshot["trial_id"] = snapshot["run_meta"]["trial_id"]
-    snapshot["condition"] = snapshot["run_meta"]["condition"]
-    snapshot["weighting_mode"] = snapshot["run_meta"]["weighting_mode"]
-    snapshot["provenance"] = {
-        "field_status": _field_status_map(snapshot),
-        "legend": {
-            "real": "measured directly or explicitly provided",
-            "derived": "computed from measured data",
-            "unsupported": "not available in the current robot-side stack",
-        },
-    }
-
-    if not include_pose_traces:
-        for mission in snapshot["missions"]:
-            mission.pop("pose_trace", None)
-        if snapshot["current_mission"] is not None:
-            snapshot["current_mission"].pop("pose_trace", None)
-
-    if not include_trajectory:
-        snapshot.pop("trajectory", None)
-        snapshot.pop("current_path", None)
-
-    if not include_reference_trajectory:
-        snapshot["reference"] = {
-            "label": snapshot["reference"].get("label"),
-            "loaded_at": snapshot["reference"].get("loaded_at"),
-            "sample_count": len(snapshot["reference"].get("trajectory") or []),
-        }
-
-    snapshot["payload_mode"] = {
-        "trajectory": bool(include_trajectory),
-        "pose_traces": bool(include_pose_traces),
-        "reference_trajectory": bool(include_reference_trajectory),
-    }
+    for mission in snapshot["missions"]:
+        mission.pop("pose_trace", None)
+    if snapshot["current_mission"] is not None:
+        snapshot["current_mission"].pop("pose_trace", None)
     return snapshot
