@@ -8,6 +8,7 @@ import shutil
 import zipfile
 from PIL import Image
 import numpy as np
+from action_msgs.msg import GoalStatus
 import rclpy
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Path
@@ -67,8 +68,8 @@ class LiveMapWeb(Node):
         
 #        self.goal_pose_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
-        self.cmd_vel_nav_pub = self.create_publisher(Twist, "/cmd_vel_nav", 10)
-        self.cmd_vel_safe_pub = self.create_publisher(Twist, "/cmd_vel_safe", 10)
+#        self.cmd_vel_nav_pub = self.create_publisher(Twist, "/cmd_vel_nav", 10)
+#        self.cmd_vel_safe_pub = self.create_publisher(Twist, "/cmd_vel_safe", 10)
 
         self.map_msg = None
         self.map_frame = "map"
@@ -167,8 +168,8 @@ class LiveMapWeb(Node):
 
         for _ in range(5):
             self.cmd_vel_pub.publish(msg)
-            self.cmd_vel_nav_pub.publish(msg)
-            self.cmd_vel_safe_pub.publish(msg)
+ #           self.cmd_vel_nav_pub.publish(msg)
+ #           self.cmd_vel_safe_pub.publish(msg)
     def cb_local_plan(self, msg: Path):
         points = self.downsample_points([
             {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
@@ -541,8 +542,12 @@ class LiveMapWeb(Node):
     def _nav_result_callback(self, future):
         self._nav_goal_handle = None
         try:
-            result = future.result().result
-            self.get_logger().info(f"Nav2 goal finished: {result}")
+            response = future.result()
+            status = response.status
+            result = response.result
+            succeeded = status == GoalStatus.STATUS_SUCCEEDED
+            status_label = "succeeded" if succeeded else str(status)
+            self.get_logger().info(f"Nav2 goal finished: status={status_label}, result={result}")
             snapshot = get_state_snapshot()
             pose = snapshot.get("pose") or {}
             pose_sample = None
@@ -552,15 +557,31 @@ class LiveMapWeb(Node):
                     "y": float(pose["y"]),
                 }
             finalize_current_mission(
-                status="completed",
-                result=str(result),
+                status="completed" if succeeded else "failed",
+                result=f"{status_label}: {result}",
                 pose=pose_sample,
             )
 
             def _upd(state):
-                state["status"]["planner_msg"] = "nav2 goal finished"
+                if succeeded:
+                    state["goal"]["x"] = None
+                    state["goal"]["y"] = None
+                    state["goal"]["yaw"] = None
+                    state["goal"]["stamp"] = now_sec()
+                    state["paths"]["nav2"] = []
+                    state["paths"]["a_star"] = []
+                    state["paths"]["plan"] = []
+                    state["paths"]["received_plan"] = []
+                    state["paths"]["local_plan"] = []
+                state["status"]["planner_ok"] = False
+                state["status"]["planner_msg"] = (
+                    "nav2 goal reached" if succeeded else f"nav2 goal {status_label}"
+                )
                 state["status"]["last_update"] = now_sec()
 
+            if succeeded:
+                self.path_xy = None
+                clear_active_path()
             update_shared_state(_upd)
 
         except Exception as e:
