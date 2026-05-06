@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # coding=utf-8
 
-import json
 import math
 import os
-import shutil
-import zipfile
+import subprocess
 from PIL import Image
 import numpy as np
 from action_msgs.msg import GoalStatus
@@ -755,96 +753,63 @@ class LiveMapWeb(Node):
         name = pop_save_request()
         if not name:
             return
-        if self.map_msg is None:
-            self.get_logger().warn("SAVE_MAP: map_msg is None, cannot save.")
-            return
 
         try:
-            self.render_map_png_if_needed()
-            self.save_map_files(name, self.map_msg)
-            self.get_logger().info(f"SAVE_MAP: saved map '{name}' into {MAP_SAVE_DIR}")
+            pbstream_path = self.save_cartographer_state(name)
+            self.get_logger().info(f"SAVE_MAP: saved Cartographer state to {pbstream_path}")
+
+            def _upd(state):
+                state["status"]["planner_msg"] = f"saved Cartographer map: {name}.pbstream"
+                state["status"]["last_update"] = now_sec()
+
+            update_shared_state(_upd)
         except Exception as e:
             self.get_logger().error(f"SAVE_MAP failed: {e}")
 
-    def save_map_files(self, base_name: str, msg: OccupancyGrid):
-        h = msg.info.height
-        w = msg.info.width
-        data = np.array(msg.data, dtype=np.int16).reshape(h, w)
+            def _upd_fail(state):
+                state["status"]["planner_msg"] = f"save Cartographer map failed: {e}"
+                state["status"]["last_update"] = now_sec()
 
-        img = np.full((h, w), 205, dtype=np.uint8)
-        img[data == 0] = 254
-        img[data > 50] = 0
+            update_shared_state(_upd_fail)
 
-        pgm_path = os.path.join(MAP_SAVE_DIR, base_name + ".pgm")
-        yaml_path = os.path.join(MAP_SAVE_DIR, base_name + ".yaml")
+    def save_cartographer_state(self, base_name: str):
+        pbstream_path = os.path.join(MAP_SAVE_DIR, base_name + ".pbstream")
+        tmp_path = os.path.join(MAP_SAVE_DIR, base_name + ".tmp.pbstream")
 
-        with open(pgm_path, "wb") as f:
-            header = f"P5\n{w} {h}\n255\n"
-            f.write(header.encode("ascii"))
-            f.write(np.flipud(img).tobytes())
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-        origin = msg.info.origin
-        yaml_content = (
-            f"image: {base_name}.pgm\n"
-            f"resolution: {msg.info.resolution}\n"
-            f"origin: [{origin.position.x}, {origin.position.y}, 0.0]\n"
-            f"negate: 0\n"
-            f"occupied_thresh: 0.65\n"
-            f"free_thresh: 0.196\n"
+        request = (
+            "{filename: '" + tmp_path.replace("\\", "\\\\") +
+            "', include_unfinished_submaps: true}"
+        )
+        result = subprocess.run(
+            [
+                "ros2",
+                "service",
+                "call",
+                "/write_state",
+                "cartographer_ros_msgs/srv/WriteState",
+                request,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
 
-        with open(yaml_path, "w") as f:
-            f.write(yaml_content)
-
-        preview_png_path = os.path.join(MAP_SAVE_DIR, base_name + ".preview.png")
-        if os.path.isfile(MAP_PNG_PATH):
-            shutil.copyfile(MAP_PNG_PATH, preview_png_path)
-
-        snapshot = get_state_snapshot()
-        map_info = snapshot.get("map_info") or {
-            "width": int(w),
-            "height": int(h),
-            "resolution": float(msg.info.resolution),
-            "origin_x": float(msg.info.origin.position.x),
-            "origin_y": float(msg.info.origin.position.y),
-            "frame_id": self.map_frame,
-        }
-        render_info = snapshot.get("render_info") or {
-            "width_cells": int(w),
-            "height_cells": int(h),
-            "resolution": float(msg.info.resolution),
-            "origin_x": float(msg.info.origin.position.x),
-            "origin_y": float(msg.info.origin.position.y),
-            "pad_left_cells": 0,
-            "pad_bottom_cells": 0,
-        }
-
-        metadata = {
-            "format": "slam-live-map-bundle-v1",
-            "base_name": base_name,
-            "map_info": map_info,
-            "render_info": render_info,
-            "files": {
-                "preview": "preview.png",
-                "occupancy": base_name + ".pgm",
-                "metadata_yaml": base_name + ".yaml",
-            },
-        }
-
-        bundle_json_path = os.path.join(MAP_SAVE_DIR, base_name + ".bundle.json")
-        with open(bundle_json_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-        bundle_zip_path = os.path.join(MAP_SAVE_DIR, base_name + ".bundle.zip")
-        with zipfile.ZipFile(bundle_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(
-                "metadata.json",
-                json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8"),
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Cartographer /write_state failed: "
+                + (result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}")
             )
-            if os.path.isfile(preview_png_path):
-                zf.write(preview_png_path, arcname="preview.png")
-            zf.write(pgm_path, arcname=os.path.basename(pgm_path))
-            zf.write(yaml_path, arcname=os.path.basename(yaml_path))
+        if not os.path.isfile(tmp_path):
+            raise RuntimeError(
+                "Cartographer /write_state did not create pbstream file. "
+                + (result.stdout.strip() or result.stderr.strip())
+            )
+
+        os.replace(tmp_path, pbstream_path)
+        return pbstream_path
 
     def render_map_png_if_needed(self):
         if not self.map_dirty or self.map_msg is None:

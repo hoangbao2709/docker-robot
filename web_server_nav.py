@@ -100,18 +100,19 @@ def _activate_map_bundle(bundle_path: str):
 class ImageServer(BaseHTTPRequestHandler):
     server_version = "LightMapHTTP/1.0"
 
-    def _send_bytes(self, status_code, content_type, data: bytes, extra_headers=None):
+    def _send_bytes(self, status_code, content_type, data: bytes, extra_headers=None, send_body=True):
         self.send_response(status_code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         if extra_headers:
             for k, v in extra_headers.items():
                 self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(data)
+        if send_body:
+            self.wfile.write(data)
 
     def _send_text(self, status_code, text):
         self._send_bytes(status_code, "text/plain; charset=utf-8", text.encode("utf-8"))
@@ -130,13 +131,48 @@ class ImageServer(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
         return json.loads(raw.decode("utf-8"))
+
+    def _send_saved_map_file(self, rel_path, send_body=True):
+        fname = os.path.basename(rel_path)
+        fpath = os.path.join(MAP_SAVE_DIR, fname)
+        if not os.path.isfile(fpath):
+            self.send_error(404, "map file not found")
+            return
+
+        if fname.endswith(".yaml") or fname.endswith(".yml"):
+            ctype = "text/yaml"
+        elif fname.endswith(".pgm"):
+            ctype = "image/x-portable-graymap"
+        elif fname.endswith(".pbstream"):
+            ctype = "application/x-cartographer-pbstream"
+        else:
+            ctype = "application/octet-stream"
+
+        with open(fpath, "rb") as f:
+            data = f.read()
+
+        self._send_bytes(
+            200,
+            ctype,
+            data,
+            extra_headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+            send_body=send_body,
+        )
     
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path.startswith("/maps/"):
+            self._send_saved_map_file(path[len("/maps/"):], send_body=False)
+            return
+        self.send_error(404)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -249,29 +285,7 @@ class ImageServer(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/maps/"):
-            rel = path[len("/maps/"):]
-            fname = os.path.basename(rel)
-            fpath = os.path.join(MAP_SAVE_DIR, fname)
-            if not os.path.isfile(fpath):
-                self.send_error(404, "map file not found")
-                return
-
-            if fname.endswith(".yaml") or fname.endswith(".yml"):
-                ctype = "text/yaml"
-            elif fname.endswith(".pgm"):
-                ctype = "image/x-portable-graymap"
-            else:
-                ctype = "application/octet-stream"
-
-            with open(fpath, "rb") as f:
-                data = f.read()
-
-            self._send_bytes(
-                200,
-                ctype,
-                data,
-                extra_headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-            )
+            self._send_saved_map_file(path[len("/maps/"):])
             return
 
         self.send_error(404)
@@ -312,7 +326,7 @@ class ImageServer(BaseHTTPRequestHandler):
                 safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in fname)
                 ext = os.path.splitext(safe)[1].lower()
 
-                if ext not in (".yaml", ".yml", ".pgm", ".png", ".jpg", ".jpeg", ".zip"):
+                if ext not in (".yaml", ".yml", ".pgm", ".png", ".jpg", ".jpeg", ".zip", ".pbstream"):
                     self.send_error(400, "Unsupported file type")
                     return
 

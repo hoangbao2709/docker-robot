@@ -363,7 +363,7 @@ def build_index_html():
           <div class="action-grid-top">
             <button id="saveBtn" class="btn btn-blue btn-wide">SAVE MAP</button>
             <button id="loadBtn" class="btn btn-blue btn-wide">LOAD MAP</button>
-            <input id="mapFile" type="file" accept=".zip,.bundle.zip"/>
+            <input id="mapFile" type="file" accept=".pbstream,.zip,.bundle.zip"/>
           </div>
           <div class="action-grid">
             <button id="resetViewBtn" class="btn">RESET VIEW</button>
@@ -645,6 +645,23 @@ def build_index_html():
 
     function api(path, options) {
       return fetch(path, options);
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function waitForMapFile(fileName, timeoutMs = 30000) {
+      const started = Date.now();
+      const url = `/maps/${encodeURIComponent(fileName)}`;
+
+      while (Date.now() - started < timeoutMs) {
+        const res = await fetch(url, { method: "HEAD", cache: "no-store" });
+        if (res.ok) return url;
+        await sleep(1000);
+      }
+
+      throw new Error(`${fileName} was not created in time`);
     }
 
     function setToggleButton(btn, active) {
@@ -1431,9 +1448,8 @@ def build_index_html():
         const res = await api(`/save_map?name=${encodeURIComponent(safe)}`);
         if (!res.ok) throw new Error("save_map failed");
 
-        setTimeout(() => {
-          window.open(`/maps/${encodeURIComponent(safe)}.bundle.zip`, "_blank");
-        }, 1000);
+        const url = await waitForMapFile(`${safe}.pbstream`);
+        window.open(url, "_blank");
       } catch (e) {
         alert("Save map failed: " + e);
       }
@@ -1452,7 +1468,7 @@ def build_index_html():
         const res = await api("/upload_map", { method: "POST", body: formData });
         if (!res.ok) throw new Error("Upload failed");
         await fetchState();
-        alert("Loaded map bundle: " + file.name);
+        alert("Uploaded map file: " + file.name);
       } catch (err) {
         alert("Upload error: " + err);
       } finally {
