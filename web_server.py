@@ -8,7 +8,7 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 from points_store import load_points, upsert_point, get_point, delete_point
-from cartographer_manager import get_slam_status
+from cartographer_manager import get_slam_status, restart_slam
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
 from metrics_store import (
     get_distance_snapshot,
@@ -349,6 +349,20 @@ class ImageServer(BaseHTTPRequestHandler):
                         "message": f"LOADED {safe}",
                         "bundle": safe,
                         "map_info": bundle_info["map_info"],
+                    })
+                    return
+
+                if ext == ".pbstream":
+                    clear_map_override()
+                    result = restart_slam(load_state_filename=fpath, load_frozen_state=True)
+                    if not result.get("ok"):
+                        self.send_error(500, f"Failed to load pbstream: {result.get('stderr') or result.get('stdout')}")
+                        return
+                    self._send_json(200, {
+                        "success": True,
+                        "message": f"LOADED_PBSTREAM {safe}",
+                        "map": safe,
+                        "slam": result,
                     })
                     return
 

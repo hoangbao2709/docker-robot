@@ -1467,8 +1467,12 @@ def build_index_html():
       try {
         const res = await api("/upload_map", { method: "POST", body: formData });
         if (!res.ok) throw new Error("Upload failed");
+        const payload = await res.json().catch(() => null);
+        if (file.name.toLowerCase().endsWith(".pbstream")) {
+          await sleep(3000);
+        }
         await fetchState();
-        alert("Uploaded map file: " + file.name);
+        alert((payload && payload.message ? payload.message : "Uploaded map file") + ": " + file.name);
       } catch (err) {
         alert("Upload error: " + err);
       } finally {

@@ -2,13 +2,22 @@
 # coding=utf-8
 
 import os
+import shlex
 import shutil
 import subprocess
 from datetime import datetime
 
 LUA_PATH = "/root/yahboomcar_ws/src/mi_cartographer/config/dogzilla_base.lua"
 
-RESTART_CMD = r"""
+def _build_restart_cmd(load_state_filename=None, load_frozen_state=True):
+    load_args = ""
+    if load_state_filename:
+        load_args = (
+            " \\\n  load_state_filename:=" + shlex.quote(load_state_filename) +
+            " \\\n  load_frozen_state:=" + ("true" if load_frozen_state else "false")
+        )
+
+    return r"""
 bash -lc '
 pkill -f cartographer_node || true
 pkill -f occupancy_grid_node || true
@@ -18,7 +27,7 @@ source /root/yahboomcar_ws/install/setup.bash
 nohup ros2 launch mi_cartographer cartographer.launch.py \
   cartographer_config_dir:=/root/yahboomcar_ws/src/mi_cartographer/config \
   configuration_basename:=dogzilla_base.lua \
-  launch_rviz:=false \
+  launch_rviz:=false""" + load_args + r""" \
   >/tmp/mi_cartographer_web.log 2>&1 &
 '
 """
@@ -66,9 +75,10 @@ def restore_latest_backup():
     return latest_backup
 
 
-def restart_slam():
+def restart_slam(load_state_filename=None, load_frozen_state=True):
+    cmd = _build_restart_cmd(load_state_filename, load_frozen_state)
     result = subprocess.run(
-        RESTART_CMD,
+        cmd,
         shell=True,
         executable="/bin/bash",
         capture_output=True,
@@ -80,6 +90,8 @@ def restart_slam():
         "stdout": result.stdout,
         "stderr": result.stderr,
         "log_path": "/tmp/mi_cartographer_web.log",
+        "load_state_filename": load_state_filename,
+        "load_frozen_state": bool(load_frozen_state),
     }
 
 
