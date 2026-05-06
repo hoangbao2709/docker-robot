@@ -11,13 +11,10 @@ from points_store import load_points, upsert_point, get_point, delete_point
 from cartographer_manager import get_slam_status
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
 from metrics_store import (
-    clear_reference_trajectory,
     get_distance_snapshot,
     get_metrics_snapshot,
     reset_distance,
     reset_metrics,
-    set_reference_trajectory,
-    update_run_meta,
 )
 from shared_state import (
     clear_map_override,
@@ -179,14 +176,10 @@ class ImageServer(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             full = qs.get("full", ["0"])[0] == "1"
             include_trajectory = full or qs.get("trajectory", ["0"])[0] == "1"
-            include_pose_traces = full or qs.get("pose_traces", ["0"])[0] == "1"
-            include_reference_trajectory = full or qs.get("reference_trajectory", ["0"])[0] == "1"
             self._send_json(
                 200,
                 get_metrics_snapshot(
                     include_trajectory=include_trajectory,
-                    include_pose_traces=include_pose_traces,
-                    include_reference_trajectory=include_reference_trajectory,
                 ),
             )
             return
@@ -389,56 +382,6 @@ class ImageServer(BaseHTTPRequestHandler):
                 "message": "distance reset",
                 "distance": get_distance_snapshot(),
             })
-            return
-
-        if path == "/metrics/reference":
-            try:
-                body = self._read_json_body()
-                samples = body.get("samples") or []
-                label = body.get("label")
-                if not isinstance(samples, list):
-                    raise ValueError("samples must be a list")
-                if not samples:
-                    clear_reference_trajectory()
-                    self._send_json(200, {
-                        "success": True,
-                        "message": "reference trajectory cleared",
-                    })
-                    return
-                set_reference_trajectory(samples, label=label)
-                self._send_json(200, {
-                    "success": True,
-                    "message": "reference trajectory loaded",
-                    "count": len(samples),
-                    "label": label or "reference",
-                })
-            except Exception as e:
-                self.send_error(400, f"bad request: {e}")
-            return
-
-        if path == "/metrics/config":
-            try:
-                body = self._read_json_body()
-                update_run_meta(
-                    method=body.get("method"),
-                    route_id=body.get("route_id"),
-                    trial_id=body.get("trial_id"),
-                    condition=body.get("condition"),
-                    weighting_mode=body.get("weighting_mode"),
-                )
-                self._send_json(200, {
-                    "success": True,
-                    "message": "metrics config updated",
-                    "config": {
-                        "method": body.get("method"),
-                        "route_id": body.get("route_id"),
-                        "trial_id": body.get("trial_id"),
-                        "condition": body.get("condition"),
-                        "weighting_mode": body.get("weighting_mode"),
-                    },
-                })
-            except Exception as e:
-                self.send_error(400, f"bad request: {e}")
             return
 
         if path == "/go_to_point":
