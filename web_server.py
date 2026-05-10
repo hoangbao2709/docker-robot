@@ -7,6 +7,7 @@ import os
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
+from backend_bridge import notify_backend_nav_action
 from points_store import load_points, upsert_point, get_point, delete_point
 from cartographer_manager import get_slam_status, restart_slam
 from config import BASE_DIR, MAP_PNG_PATH, MAP_SAVE_DIR
@@ -236,6 +237,7 @@ class ImageServer(BaseHTTPRequestHandler):
                 v = None if v_raw is None else float(v_raw)
 
                 set_goal_request(x, y, yaw, u=u, v=v)
+                notify_backend_nav_action("goal", x, y, yaw, u=u, v=v)
                 self._send_text(200, "OK")
             except Exception as e:
                 self.send_error(400, f"bad params: {e}")
@@ -252,6 +254,7 @@ class ImageServer(BaseHTTPRequestHandler):
                 v = None if v_raw is None else float(v_raw)
 
                 set_initial_pose_request(x, y, yaw, u=u, v=v)
+                notify_backend_nav_action("initial_pose", x, y, yaw, u=u, v=v)
                 self._send_text(200, "OK")
             except Exception as e:
                 self.send_error(400, f"bad params: {e}")
