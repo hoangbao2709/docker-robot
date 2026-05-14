@@ -33,6 +33,19 @@ from templates import build_index_html
 LOADED_MAP_IMAGE_PATH = os.path.join(BASE_DIR, "_loaded_map_preview.png")
 
 
+def _sanitize_point_name(name: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in str(name).strip())
+
+
+def _optional_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def _get_effective_state_snapshot():
     snapshot = get_state_snapshot()
     override = get_map_override()
@@ -383,6 +396,45 @@ class ImageServer(BaseHTTPRequestHandler):
                 point = upsert_point(safe_name, x, y, yaw)
                 self._send_json(200, {
                     "success": True,
+                    "name": safe_name,
+                    "point": point,
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+
+        if path == "/qr_target":
+            try:
+                body = self._read_json_body()
+                raw_name = str(body.get("name") or body.get("text") or "").strip()
+                if not raw_name:
+                    raise ValueError("name is required")
+
+                safe_name = _sanitize_point_name(raw_name)
+                if not safe_name:
+                    raise ValueError("invalid point name")
+
+                x = float(body.get("x"))
+                y = float(body.get("y"))
+                yaw = float(body.get("yaw", 0.0))
+
+                point = upsert_point(
+                    safe_name,
+                    x,
+                    y,
+                    yaw,
+                    qr_text=str(body.get("text") or ""),
+                    source="qr",
+                    distance_source=str(body.get("distance_source") or ""),
+                    distance_m=_optional_float(body.get("distance_m")),
+                    map_x_m=_optional_float(body.get("map_x_m")),
+                    map_y_m=_optional_float(body.get("map_y_m")),
+                    ray_angle_rad=_optional_float(body.get("ray_angle_rad")),
+                )
+
+                self._send_json(200, {
+                    "success": True,
+                    "message": "QR target saved",
                     "name": safe_name,
                     "point": point,
                 })

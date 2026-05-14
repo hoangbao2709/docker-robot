@@ -30,15 +30,20 @@ def save_points(points):
             json.dump(points, f, ensure_ascii=False, indent=2)
 
 
-def upsert_point(name: str, x: float, y: float, yaw: float):
+def upsert_point(name: str, x: float, y: float, yaw: float, **metadata):
     points = load_points()
-    points[name] = {
+    point = {
         "x": float(x),
         "y": float(y),
         "yaw": float(yaw),
     }
+    for key, value in metadata.items():
+        if value is None:
+            continue
+        point[key] = value
+    points[name] = point
     save_points(points)
-    return points[name]
+    return point
 
 
 def get_point(name: str):

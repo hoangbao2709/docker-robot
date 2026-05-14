@@ -140,9 +140,14 @@ API named points:
 ```text
 GET /points
 POST /points
+POST /qr_target
 POST /delete_point
 POST /point_from_obstacle
 ```
+
+`POST /qr_target` la alias cho diem QR vua phat hien. Endpoint nay luu
+`x/y/yaw` vao `named_points.json` va giu them metadata nhu `qr_text`,
+`distance_source`, `distance_m` de debug.
 
 API saved maps:
 
