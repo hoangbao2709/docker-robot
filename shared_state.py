@@ -4,6 +4,7 @@
 import copy
 import threading
 import time
+from typing import Any
 
 LOCK = threading.Lock()
 
@@ -13,10 +14,24 @@ CLEAR_REQUEST = False
 SAVE_REQUEST_NAME = None
 MAP_OVERRIDE = None
 
-SHARED_STATE = {
+SHARED_STATE: dict[str, Any] = {
     "map_version": 0,
     "map_info": None,
     "render_info": None,
+    "qr_target": {
+        "ok": False,
+        "name": None,
+        "text": None,
+        "x": None,
+        "y": None,
+        "yaw": None,
+        "distance_source": None,
+        "distance_m": None,
+        "map_x_m": None,
+        "map_y_m": None,
+        "ray_angle_rad": None,
+        "stamp": 0.0,
+    },
     "pose": {
         "x": 0.0,
         "y": 0.0,

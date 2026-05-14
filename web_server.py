@@ -22,6 +22,7 @@ from shared_state import (
     get_map_override,
     get_state_snapshot,
     request_clear_path,
+    update_shared_state,
     set_map_override,
     set_goal_request,
     set_initial_pose_request,
@@ -344,6 +345,59 @@ class ImageServer(BaseHTTPRequestHandler):
                     "success": True,
                     "name": safe_name,
                     "point": point,
+                })
+            except Exception as e:
+                self.send_error(400, f"bad request: {e}")
+            return
+
+        if path == "/qr_target":
+            try:
+                body = self._read_json_body()
+                name = str(body.get("name", "")).strip()
+                text = str(body.get("text", "")).strip() or None
+                x = float(body.get("x"))
+                y = float(body.get("y"))
+                yaw = float(body.get("yaw", 0.0))
+                distance_source = str(body.get("distance_source", "lidar") or "lidar")
+                distance_m = body.get("distance_m")
+                map_x_m = body.get("map_x_m")
+                map_y_m = body.get("map_y_m")
+                ray_angle_rad = body.get("ray_angle_rad")
+
+                if not name:
+                    raise ValueError("name is required")
+
+                safe_name = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)
+                if not safe_name:
+                    raise ValueError("invalid name")
+
+                point = upsert_point(safe_name, x, y, yaw)
+
+                def _upd(state):
+                    state["qr_target"] = {
+                        "ok": True,
+                        "name": safe_name,
+                        "text": text,
+                        "x": float(x),
+                        "y": float(y),
+                        "yaw": float(yaw),
+                        "distance_source": distance_source,
+                        "distance_m": None if distance_m is None else float(distance_m),
+                        "map_x_m": None if map_x_m is None else float(map_x_m),
+                        "map_y_m": None if map_y_m is None else float(map_y_m),
+                        "ray_angle_rad": None if ray_angle_rad is None else float(ray_angle_rad),
+                        "stamp": time.time(),
+                        "point": point,
+                    }
+                    state["status"]["last_update"] = time.time()
+
+                update_shared_state(_upd)
+
+                self._send_json(200, {
+                    "success": True,
+                    "name": safe_name,
+                    "point": point,
+                    "qr_target": get_state_snapshot().get("qr_target"),
                 })
             except Exception as e:
                 self.send_error(400, f"bad request: {e}")

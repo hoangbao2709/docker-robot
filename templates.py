@@ -1026,6 +1026,45 @@ def build_index_html():
       }
     }
 
+    function drawQrTarget(qrTarget) {
+      if (!qrTarget || !qrTarget.ok) return;
+      if (qrTarget.x === null || qrTarget.y === null || qrTarget.yaw === null) return;
+
+      const p = worldToScreen(qrTarget.x, qrTarget.y);
+      if (!p) return;
+
+      ctx.strokeStyle = "rgba(255,180,40,0.95)";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3.1, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255,180,40,1)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+
+      const p2 = worldToScreen(
+        qrTarget.x + 0.14 * Math.cos(qrTarget.yaw),
+        qrTarget.y + 0.14 * Math.sin(qrTarget.yaw)
+      );
+
+      if (p2) {
+        ctx.strokeStyle = "rgba(255,180,40,0.95)";
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+    }
+
     function drawPendingGoal() {
       if (!pendingGoal) return;
 
@@ -1144,6 +1183,9 @@ def build_index_html():
 
       if (lastState.pose && lastState.pose.ok) {
         drawRobot(lastState.pose.x, lastState.pose.y, lastState.pose.theta);
+      }
+      if (lastState.qr_target && lastState.qr_target.ok) {
+        drawQrTarget(lastState.qr_target);
       }
       if (uiMode === "nav") {
         drawGoal(lastState.goal);
